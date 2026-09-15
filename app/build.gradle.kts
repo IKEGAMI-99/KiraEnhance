@@ -15,10 +15,30 @@ android {
         versionCode = 1
         versionName = "0.1.0-alpha01"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        ndk {
+            abiFilters += "arm64-v8a"
+        }
+
+        externalNativeBuild {
+            cmake {
+                cppFlags += "-std=c++17"
+                providers.environmentVariable("NCNN_DIR").orNull
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let { arguments += "-Dncnn_DIR=$it" }
+            }
+        }
     }
 
     buildFeatures {
         compose = true
+    }
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
     }
 
     compileOptions {

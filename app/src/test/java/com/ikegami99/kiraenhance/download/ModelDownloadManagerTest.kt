@@ -1,5 +1,6 @@
 package com.ikegami99.kiraenhance.download
 
+import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import com.ikegami99.kiraenhance.model.ControlType
 import com.ikegami99.kiraenhance.model.EnhancementMode
@@ -21,6 +22,18 @@ class ModelDownloadManagerTest {
         assertEquals(
             "model-download-pisa-sr-candidate-1",
             ModelDownloadManager.workName(model()),
+        )
+    }
+
+    @Test
+    fun reinstallReplacesExistingUniqueWork() {
+        assertEquals(
+            ExistingWorkPolicy.KEEP,
+            ModelDownloadManager.workPolicyFor(replaceExisting = false),
+        )
+        assertEquals(
+            ExistingWorkPolicy.REPLACE,
+            ModelDownloadManager.workPolicyFor(replaceExisting = true),
         )
     }
 

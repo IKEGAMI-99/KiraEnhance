@@ -85,6 +85,23 @@ class NcnnInferenceTest {
     }
 
     @Test
+    fun tiledInferenceRetriesWithSmallerTilesAfterNativeOutOfMemory() {
+        val native = TiledFakeNcnnNativeApi(scale = 4, outOfMemoryOnCall = 1)
+        val engine = NcnnUpscaleEngine(native)
+        engine.load(validRequest())
+
+        val result = engine.upscale(
+            input = rgbaInput(width = 100, height = 100),
+            settings = UpscaleSettings(outputScale = 4, useGpu = true, tileSize = 96),
+        )
+
+        assertTrue(result is UpscaleResult.Success)
+        assertEquals(5, native.inferCalls)
+        assertEquals(100 to 100, native.inputSizes[0])
+        assertEquals(74 to 74, native.inputSizes[1])
+    }
+
+    @Test
     fun nonNativeScaleIsRejectedBeforeNativeInference() {
         val native = FakeNcnnNativeApi()
         val engine = NcnnUpscaleEngine(native)
@@ -249,6 +266,7 @@ class NcnnInferenceTest {
 
     private class TiledFakeNcnnNativeApi(
         private val scale: Int,
+        private val outOfMemoryOnCall: Int? = null,
     ) : NcnnNativeApi {
         var inferCalls: Int = 0
         val inputSizes = mutableListOf<Pair<Int, Int>>()
@@ -284,6 +302,16 @@ class NcnnInferenceTest {
         ): NcnnNativeInferenceResult {
             inferCalls += 1
             inputSizes += width to height
+            if (inferCalls == outOfMemoryOnCall) {
+                return NcnnNativeInferenceResult(
+                    errorCode = NcnnNativeError.OUT_OF_MEMORY,
+                    outputWidth = 0,
+                    outputHeight = 0,
+                    outputRowStrideBytes = 0,
+                    gpuUsed = false,
+                )
+            }
+
             val marker = inferCalls.toByte()
             val outputWidth = width * scale
             val outputHeight = height * scale

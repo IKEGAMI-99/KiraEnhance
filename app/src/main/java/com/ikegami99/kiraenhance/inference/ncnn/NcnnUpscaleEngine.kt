@@ -8,6 +8,7 @@ import com.ikegami99.kiraenhance.inference.PixelFormat
 import com.ikegami99.kiraenhance.inference.UpscaleEngine
 import com.ikegami99.kiraenhance.inference.UpscaleInput
 import com.ikegami99.kiraenhance.inference.UpscaleOutput
+import com.ikegami99.kiraenhance.inference.UpscaleProgress
 import com.ikegami99.kiraenhance.inference.UpscaleResult
 import com.ikegami99.kiraenhance.inference.UpscaleSettings
 import com.ikegami99.kiraenhance.inference.tile.AdaptiveTileSizer
@@ -27,6 +28,7 @@ class NcnnUpscaleEngine(
     private var inferenceInProgress: Boolean = false
     private var pendingUnload: Boolean = false
     private var cancelRequested: Boolean = false
+    private var currentProgress: UpscaleProgress = UpscaleProgress()
 
     override fun load(request: ModelLoadRequest): ModelLoadResult {
         synchronized(stateLock) {
@@ -99,6 +101,10 @@ class NcnnUpscaleEngine(
         nativeHandle != 0L && loadedRequest != null
     }
 
+    override fun progress(): UpscaleProgress = synchronized(stateLock) {
+        currentProgress
+    }
+
     override fun upscale(
         input: UpscaleInput,
         settings: UpscaleSettings,
@@ -130,6 +136,7 @@ class NcnnUpscaleEngine(
                 )
             }
             cancelRequested = false
+            currentProgress = UpscaleProgress()
             inferenceInProgress = true
         }
 
@@ -352,8 +359,10 @@ class NcnnUpscaleEngine(
             padding = request.capabilities.prePadding,
             scale = settings.outputScale,
         )
+        updateProgress(completedTiles = 0, totalTiles = tiles.size)
 
         var usedGpuForAllTiles = true
+        var completedTiles = 0
         for (tile in tiles) {
             if (isCancellationRequested()) {
                 return cancelledResult()
@@ -410,6 +419,8 @@ class NcnnUpscaleEngine(
                 outputRowStride = outputRowStride,
                 destination = tile.outputCore,
             )
+            completedTiles += 1
+            updateProgress(completedTiles = completedTiles, totalTiles = tiles.size)
             usedGpuForAllTiles = usedGpuForAllTiles && nativeResult.gpuUsed
         }
 
@@ -513,6 +524,15 @@ class NcnnUpscaleEngine(
         ByteBuffer.allocateDirect(byteCount)
     } catch (_: OutOfMemoryError) {
         null
+    }
+
+    private fun updateProgress(completedTiles: Int, totalTiles: Int) {
+        synchronized(stateLock) {
+            currentProgress = UpscaleProgress(
+                completedTiles = completedTiles,
+                totalTiles = totalTiles,
+            )
+        }
     }
 
     private fun isCancellationRequested(): Boolean = synchronized(stateLock) {

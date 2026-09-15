@@ -23,22 +23,9 @@ class ModelDownloadManager(
             .setRequiredNetworkType(networkTypeFor(wifiOnly))
             .build()
 
-        val inputBuilder = Data.Builder()
-            .putString(ModelDownloadWorker.KEY_MODEL_ID, model.id)
-            .putString(ModelDownloadWorker.KEY_VERSION, model.version)
-            .putInt(ModelDownloadWorker.KEY_ARTIFACT_COUNT, model.artifacts.size)
-
-        model.artifacts.forEachIndexed { index, artifact ->
-            inputBuilder
-                .putString(ModelDownloadWorker.artifactFileNameKey(index), artifact.fileName)
-                .putString(ModelDownloadWorker.artifactUrlKey(index), artifact.downloadUrl)
-                .putString(ModelDownloadWorker.artifactSha256Key(index), artifact.sha256)
-                .putLong(ModelDownloadWorker.artifactSizeKey(index), artifact.fileSizeBytes)
-        }
-
         val request = OneTimeWorkRequest.Builder(ModelDownloadWorker::class.java)
             .setConstraints(constraints)
-            .setInputData(inputBuilder.build())
+            .setInputData(inputDataFor(model))
             .addTag("model-download")
             .addTag("model-download-${model.id}")
             .build()
@@ -60,5 +47,22 @@ class ModelDownloadManager(
 
         internal fun workPolicyFor(replaceExisting: Boolean): ExistingWorkPolicy =
             if (replaceExisting) ExistingWorkPolicy.REPLACE else ExistingWorkPolicy.KEEP
+
+        internal fun inputDataFor(model: ModelDescriptor): Data {
+            val builder = Data.Builder()
+                .putString(ModelDownloadWorker.KEY_MODEL_ID, model.id)
+                .putString(ModelDownloadWorker.KEY_VERSION, model.version)
+                .putInt(ModelDownloadWorker.KEY_ARTIFACT_COUNT, model.artifacts.size)
+
+            model.artifacts.forEachIndexed { index, artifact ->
+                builder
+                    .putString(ModelDownloadWorker.artifactFileNameKey(index), artifact.fileName)
+                    .putString(ModelDownloadWorker.artifactUrlKey(index), artifact.downloadUrl)
+                    .putString(ModelDownloadWorker.artifactSha256Key(index), artifact.sha256)
+                    .putLong(ModelDownloadWorker.artifactSizeKey(index), artifact.fileSizeBytes)
+            }
+
+            return builder.build()
+        }
     }
 }

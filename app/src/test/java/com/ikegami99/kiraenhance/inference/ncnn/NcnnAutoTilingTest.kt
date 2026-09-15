@@ -43,8 +43,35 @@ class NcnnAutoTilingTest {
         )
     }
 
+    @Test
+    fun highMemoryGpuUsesLargerAutomaticTile() {
+        val native = RecordingNcnnNativeApi(scale = 4)
+        val engine = NcnnUpscaleEngine(
+            nativeApi = native,
+            totalRamMbProvider = { 12_288L },
+        )
+        engine.load(validRequest())
+
+        val result = engine.upscale(
+            input = rgbaInput(width = 385, height = 385),
+            settings = UpscaleSettings(outputScale = 4),
+        )
+
+        assertTrue(result is UpscaleResult.Success)
+        assertEquals(4, native.inferCalls)
+        assertEquals(
+            listOf(
+                385 to 385,
+                11 to 385,
+                385 to 11,
+                11 to 11,
+            ),
+            native.inputSizes,
+        )
+    }
+
     private fun validRequest(): ModelLoadRequest {
-        val directory = temporaryFolder.newFolder("model")
+        val directory = temporaryFolder.newFolder("model-${System.nanoTime()}")
         val param = File(directory, "model.param").apply { writeText("param") }
         val bin = File(directory, "model.bin").apply { writeBytes(byteArrayOf(1)) }
         return ModelLoadRequest(

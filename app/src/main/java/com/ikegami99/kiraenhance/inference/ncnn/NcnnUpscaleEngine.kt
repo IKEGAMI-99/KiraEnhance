@@ -160,7 +160,13 @@ class NcnnUpscaleEngine(
                 )
             }
 
-            if (settings.tileSize != null) {
+            val initialTileSize = settings.tileSize ?: DEFAULT_AUTO_TILE_SIZE
+            if (
+                settings.tileSize != null ||
+                input.width > initialTileSize ||
+                input.height > initialTileSize ||
+                outputBytes > MAX_SMOKE_OUTPUT_BYTES
+            ) {
                 return upscaleTiled(
                     handle = handle,
                     request = request,
@@ -173,14 +179,6 @@ class NcnnUpscaleEngine(
                 )
             }
 
-            if (outputBytes > MAX_SMOKE_OUTPUT_BYTES) {
-                return UpscaleResult.Failed(
-                    EngineError(
-                        code = EngineErrorCode.OUT_OF_MEMORY,
-                        message = "Small-image inference is limited to 64 MiB output; use tiled inference",
-                    ),
-                )
-            }
             if (isCancellationRequested()) {
                 return cancelledResult()
             }
@@ -296,7 +294,7 @@ class NcnnUpscaleEngine(
         }
         val output = allocateDirectOrNull(outputBytes)
             ?: return UpscaleResult.Failed(outOfMemoryError("Unable to allocate tiled output pixel buffer"))
-        var tileSize = requireNotNull(settings.tileSize)
+        var tileSize = settings.tileSize ?: DEFAULT_AUTO_TILE_SIZE
 
         while (true) {
             if (isCancellationRequested()) {
@@ -576,6 +574,7 @@ class NcnnUpscaleEngine(
 
     private companion object {
         const val BYTES_PER_RGBA_PIXEL = 4L
+        const val DEFAULT_AUTO_TILE_SIZE = 128
         const val MAX_SMOKE_OUTPUT_BYTES = 64L * 1024L * 1024L
     }
 }

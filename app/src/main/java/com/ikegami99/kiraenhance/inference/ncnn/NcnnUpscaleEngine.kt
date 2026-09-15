@@ -10,6 +10,8 @@ import com.ikegami99.kiraenhance.inference.UpscaleInput
 import com.ikegami99.kiraenhance.inference.UpscaleOutput
 import com.ikegami99.kiraenhance.inference.UpscaleResult
 import com.ikegami99.kiraenhance.inference.UpscaleSettings
+import com.ikegami99.kiraenhance.inference.tile.IntRect
+import com.ikegami99.kiraenhance.inference.tile.TilePlanner
 import java.nio.ByteBuffer
 
 class NcnnUpscaleEngine(
@@ -140,13 +142,27 @@ class NcnnUpscaleEngine(
                 outputWidthLong > Int.MAX_VALUE ||
                 outputHeightLong > Int.MAX_VALUE ||
                 outputRowStrideLong > Int.MAX_VALUE ||
-                outputBytes <= 0L
+                outputBytes <= 0L ||
+                outputBytes > Int.MAX_VALUE
             ) {
                 return UpscaleResult.Failed(
                     EngineError(
                         code = EngineErrorCode.OUT_OF_MEMORY,
                         message = "Requested output dimensions are too large",
                     ),
+                )
+            }
+
+            if (settings.tileSize != null) {
+                return upscaleTiled(
+                    handle = handle,
+                    request = request,
+                    input = input,
+                    settings = settings,
+                    outputWidth = outputWidthLong.toInt(),
+                    outputHeight = outputHeightLong.toInt(),
+                    outputRowStride = outputRowStrideLong.toInt(),
+                    outputBytes = outputBytes.toInt(),
                 )
             }
 
@@ -160,16 +176,8 @@ class NcnnUpscaleEngine(
             }
 
             val directInput = input.pixels.asDirectSlice()
-            val output = try {
-                ByteBuffer.allocateDirect(outputBytes.toInt())
-            } catch (_: OutOfMemoryError) {
-                return UpscaleResult.Failed(
-                    EngineError(
-                        code = EngineErrorCode.OUT_OF_MEMORY,
-                        message = "Unable to allocate output pixel buffer",
-                    ),
-                )
-            }
+            val output = allocateDirectOrNull(outputBytes.toInt())
+                ?: return UpscaleResult.Failed(outOfMemoryError("Unable to allocate output pixel buffer"))
 
             val nativeResult = nativeApi.infer(
                 handle = handle,
@@ -247,6 +255,139 @@ class NcnnUpscaleEngine(
         }
     }
 
+    private fun upscaleTiled(
+        handle: Long,
+        request: ModelLoadRequest,
+        input: UpscaleInput,
+        settings: UpscaleSettings,
+        outputWidth: Int,
+        outputHeight: Int,
+        outputRowStride: Int,
+        outputBytes: Int,
+    ): UpscaleResult {
+        val tileSize = requireNotNull(settings.tileSize)
+        val tiles = TilePlanner.plan(
+            imageWidth = input.width,
+            imageHeight = input.height,
+            tileSize = tileSize,
+            padding = request.capabilities.prePadding,
+            scale = settings.outputScale,
+        )
+        val output = allocateDirectOrNull(outputBytes)
+            ?: return UpscaleResult.Failed(outOfMemoryError("Unable to allocate tiled output pixel buffer"))
+
+        var usedGpuForAllTiles = true
+        for (tile in tiles) {
+            val tileInput = copyInputRegion(input, tile.input)
+                ?: return UpscaleResult.Failed(outOfMemoryError("Unable to allocate tile input buffer"))
+            val tileOutputWidth = tile.input.width * settings.outputScale
+            val tileOutputHeight = tile.input.height * settings.outputScale
+            val tileOutputRowStride = tileOutputWidth * BYTES_PER_RGBA_PIXEL.toInt()
+            val tileOutputBytes = tileOutputRowStride * tileOutputHeight
+            val tileOutput = allocateDirectOrNull(tileOutputBytes)
+                ?: return UpscaleResult.Failed(outOfMemoryError("Unable to allocate tile output buffer"))
+
+            val nativeResult = nativeApi.infer(
+                handle = handle,
+                inputPixels = tileInput,
+                width = tile.input.width,
+                height = tile.input.height,
+                inputRowStrideBytes = tile.input.width * BYTES_PER_RGBA_PIXEL.toInt(),
+                outputPixels = tileOutput,
+                outputCapacityBytes = tileOutputBytes.toLong(),
+            )
+
+            if (nativeResult.errorCode != NcnnNativeError.NONE) {
+                return UpscaleResult.Failed(nativeInferenceError(nativeResult.errorCode))
+            }
+            if (
+                nativeResult.outputWidth != tileOutputWidth ||
+                nativeResult.outputHeight != tileOutputHeight ||
+                nativeResult.outputRowStrideBytes != tileOutputRowStride
+            ) {
+                return UpscaleResult.Failed(
+                    EngineError(
+                        code = EngineErrorCode.INTERNAL,
+                        message = "ncnn returned unexpected tiled output dimensions",
+                    ),
+                )
+            }
+
+            copyUpscaledCore(
+                tileOutput = tileOutput,
+                tileOutputRowStride = tileOutputRowStride,
+                crop = tile.cropFromUpscaledTile,
+                output = output,
+                outputRowStride = outputRowStride,
+                destination = tile.outputCore,
+            )
+            usedGpuForAllTiles = usedGpuForAllTiles && nativeResult.gpuUsed
+        }
+
+        output.position(0)
+        output.limit(outputBytes)
+        return UpscaleResult.Success(
+            output = UpscaleOutput(
+                width = outputWidth,
+                height = outputHeight,
+                rowStrideBytes = outputRowStride,
+                pixelFormat = PixelFormat.RGBA_8888,
+                pixels = output,
+            ),
+            usedGpu = usedGpuForAllTiles,
+        )
+    }
+
+    private fun copyInputRegion(
+        input: UpscaleInput,
+        region: IntRect,
+    ): ByteBuffer? {
+        val rowBytes = region.width * BYTES_PER_RGBA_PIXEL.toInt()
+        val byteCount = rowBytes * region.height
+        val tile = allocateDirectOrNull(byteCount) ?: return null
+        val imageBase = input.pixels.position()
+
+        for (y in region.top until region.bottom) {
+            val sourceOffset = imageBase + y * input.rowStrideBytes + region.left * BYTES_PER_RGBA_PIXEL.toInt()
+            val sourceRow = input.pixels.duplicate().apply {
+                position(sourceOffset)
+                limit(sourceOffset + rowBytes)
+            }
+            tile.put(sourceRow)
+        }
+        tile.flip()
+        return tile
+    }
+
+    private fun copyUpscaledCore(
+        tileOutput: ByteBuffer,
+        tileOutputRowStride: Int,
+        crop: IntRect,
+        output: ByteBuffer,
+        outputRowStride: Int,
+        destination: IntRect,
+    ) {
+        require(crop.width == destination.width && crop.height == destination.height) {
+            "Tile crop and destination dimensions must match"
+        }
+        val rowBytes = crop.width * BYTES_PER_RGBA_PIXEL.toInt()
+
+        for (row in 0 until crop.height) {
+            val sourceOffset = (crop.top + row) * tileOutputRowStride + crop.left * BYTES_PER_RGBA_PIXEL.toInt()
+            val sourceRow = tileOutput.duplicate().apply {
+                position(sourceOffset)
+                limit(sourceOffset + rowBytes)
+            }
+            val destinationOffset =
+                (destination.top + row) * outputRowStride + destination.left * BYTES_PER_RGBA_PIXEL.toInt()
+            val destinationRow = output.duplicate().apply {
+                position(destinationOffset)
+                limit(destinationOffset + rowBytes)
+            }
+            destinationRow.put(sourceRow)
+        }
+    }
+
     private fun validateInference(
         input: UpscaleInput,
         settings: UpscaleSettings,
@@ -261,7 +402,7 @@ class NcnnUpscaleEngine(
         if (settings.outputScale != request.capabilities.nativeScale) {
             return EngineError(
                 code = EngineErrorCode.INVALID_INPUT,
-                message = "This ncnn smoke path only supports the model's native scale",
+                message = "This ncnn path only supports the model's native scale",
             )
         }
         return null
@@ -278,6 +419,17 @@ class NcnnUpscaleEngine(
             flip()
         }
     }
+
+    private fun allocateDirectOrNull(byteCount: Int): ByteBuffer? = try {
+        ByteBuffer.allocateDirect(byteCount)
+    } catch (_: OutOfMemoryError) {
+        null
+    }
+
+    private fun outOfMemoryError(message: String): EngineError = EngineError(
+        code = EngineErrorCode.OUT_OF_MEMORY,
+        message = message,
+    )
 
     private fun unloadLocked() {
         if (nativeHandle != 0L) {

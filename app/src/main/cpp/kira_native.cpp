@@ -194,6 +194,9 @@ Java_com_ikegami99_kiraenhance_inference_ncnn_NcnnNativeBridge_nativeLoadModel(
     context->native_scale = native_scale;
     context->pre_padding = pre_padding;
     context->net.opt.use_vulkan_compute = gpu_enabled;
+    context->net.opt.use_fp16_packed = true;
+    context->net.opt.use_fp16_storage = true;
+    context->net.opt.use_fp16_arithmetic = false;
 
 #if NCNN_VULKAN
     if (gpu_enabled) {

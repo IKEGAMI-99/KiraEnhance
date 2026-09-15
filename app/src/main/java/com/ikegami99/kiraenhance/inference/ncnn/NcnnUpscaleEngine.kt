@@ -24,6 +24,7 @@ class NcnnUpscaleEngine(
     private var gpuEnabled: Boolean = false
     private var inferenceInProgress: Boolean = false
     private var pendingUnload: Boolean = false
+    private var cancelRequested: Boolean = false
 
     override fun load(request: ModelLoadRequest): ModelLoadResult {
         synchronized(stateLock) {
@@ -87,6 +88,7 @@ class NcnnUpscaleEngine(
             loadedRequest = request
             gpuEnabled = nativeResult.gpuEnabled
             pendingUnload = false
+            cancelRequested = false
         }
         return ModelLoadResult.Loaded(gpuEnabled = nativeResult.gpuEnabled)
     }
@@ -125,6 +127,7 @@ class NcnnUpscaleEngine(
                     ),
                 )
             }
+            cancelRequested = false
             inferenceInProgress = true
         }
 
@@ -132,6 +135,9 @@ class NcnnUpscaleEngine(
             val validationError = validateInference(input, settings, request)
             if (validationError != null) {
                 return UpscaleResult.Failed(validationError)
+            }
+            if (isCancellationRequested()) {
+                return cancelledResult()
             }
 
             val outputWidthLong = input.width.toLong() * settings.outputScale.toLong()
@@ -175,10 +181,16 @@ class NcnnUpscaleEngine(
                     ),
                 )
             }
+            if (isCancellationRequested()) {
+                return cancelledResult()
+            }
 
             val directInput = input.pixels.asDirectSlice()
             val output = allocateDirectOrNull(outputBytes.toInt())
                 ?: return UpscaleResult.Failed(outOfMemoryError("Unable to allocate output pixel buffer"))
+            if (isCancellationRequested()) {
+                return cancelledResult()
+            }
 
             val nativeResult = nativeApi.infer(
                 handle = handle,
@@ -192,6 +204,9 @@ class NcnnUpscaleEngine(
 
             if (nativeResult.errorCode != NcnnNativeError.NONE) {
                 return UpscaleResult.Failed(nativeInferenceError(nativeResult.errorCode))
+            }
+            if (isCancellationRequested()) {
+                return cancelledResult()
             }
 
             val outputWidth = outputWidthLong.toInt()
@@ -228,13 +243,22 @@ class NcnnUpscaleEngine(
                 if (pendingUnload) {
                     unloadLocked()
                     pendingUnload = false
+                } else {
+                    cancelRequested = false
                 }
             }
         }
     }
 
     override fun cancel() {
-        val handle = synchronized(stateLock) { nativeHandle }
+        val handle = synchronized(stateLock) {
+            if (!inferenceInProgress) {
+                0L
+            } else {
+                cancelRequested = true
+                nativeHandle
+            }
+        }
         if (handle != 0L) {
             nativeApi.cancel(handle)
         }
@@ -245,6 +269,7 @@ class NcnnUpscaleEngine(
         synchronized(stateLock) {
             if (inferenceInProgress) {
                 pendingUnload = true
+                cancelRequested = true
                 handleToCancel = nativeHandle
             } else {
                 unloadLocked()
@@ -266,11 +291,17 @@ class NcnnUpscaleEngine(
         outputRowStride: Int,
         outputBytes: Int,
     ): UpscaleResult {
+        if (isCancellationRequested()) {
+            return cancelledResult()
+        }
         val output = allocateDirectOrNull(outputBytes)
             ?: return UpscaleResult.Failed(outOfMemoryError("Unable to allocate tiled output pixel buffer"))
         var tileSize = requireNotNull(settings.tileSize)
 
         while (true) {
+            if (isCancellationRequested()) {
+                return cancelledResult()
+            }
             val result = runTiledPass(
                 handle = handle,
                 request = request,
@@ -285,6 +316,9 @@ class NcnnUpscaleEngine(
             )
 
             if (result is UpscaleResult.Failed && result.error.code == EngineErrorCode.OUT_OF_MEMORY) {
+                if (isCancellationRequested()) {
+                    return cancelledResult()
+                }
                 val nextTileSize = AdaptiveTileSizer.nextSmaller(tileSize) ?: return result
                 tileSize = nextTileSize
                 continue
@@ -316,14 +350,23 @@ class NcnnUpscaleEngine(
 
         var usedGpuForAllTiles = true
         for (tile in tiles) {
+            if (isCancellationRequested()) {
+                return cancelledResult()
+            }
             val tileInput = copyInputRegion(input, tile.input)
                 ?: return UpscaleResult.Failed(outOfMemoryError("Unable to allocate tile input buffer"))
+            if (isCancellationRequested()) {
+                return cancelledResult()
+            }
             val tileOutputWidth = tile.input.width * settings.outputScale
             val tileOutputHeight = tile.input.height * settings.outputScale
             val tileOutputRowStride = tileOutputWidth * BYTES_PER_RGBA_PIXEL.toInt()
             val tileOutputBytes = tileOutputRowStride * tileOutputHeight
             val tileOutput = allocateDirectOrNull(tileOutputBytes)
                 ?: return UpscaleResult.Failed(outOfMemoryError("Unable to allocate tile output buffer"))
+            if (isCancellationRequested()) {
+                return cancelledResult()
+            }
 
             val nativeResult = nativeApi.infer(
                 handle = handle,
@@ -337,6 +380,9 @@ class NcnnUpscaleEngine(
 
             if (nativeResult.errorCode != NcnnNativeError.NONE) {
                 return UpscaleResult.Failed(nativeInferenceError(nativeResult.errorCode))
+            }
+            if (isCancellationRequested()) {
+                return cancelledResult()
             }
             if (
                 nativeResult.outputWidth != tileOutputWidth ||
@@ -464,6 +510,17 @@ class NcnnUpscaleEngine(
         null
     }
 
+    private fun isCancellationRequested(): Boolean = synchronized(stateLock) {
+        cancelRequested
+    }
+
+    private fun cancelledResult(): UpscaleResult.Failed = UpscaleResult.Failed(
+        EngineError(
+            code = EngineErrorCode.CANCELLED,
+            message = "ncnn inference was cancelled",
+        ),
+    )
+
     private fun outOfMemoryError(message: String): EngineError = EngineError(
         code = EngineErrorCode.OUT_OF_MEMORY,
         message = message,
@@ -476,6 +533,7 @@ class NcnnUpscaleEngine(
         nativeHandle = 0L
         loadedRequest = null
         gpuEnabled = false
+        cancelRequested = false
     }
 
     private fun nativeErrorMessage(error: NcnnNativeError): String = when (error) {

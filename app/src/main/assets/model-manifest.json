@@ -1,0 +1,87 @@
+{
+  "schemaVersion": 1,
+  "models": [
+    {
+      "id": "realesrgan-anime",
+      "displayName": "RealESRGAN Anime candidate",
+      "mode": "FIDELITY",
+      "version": "candidate-1",
+      "backend": "NCNN",
+      "downloadUrl": "https://example.invalid/models/realesrgan-anime/model.bin",
+      "fileSizeBytes": 1000000,
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "supportedScales": [2, 4],
+      "minAppVersion": "0.1.0-alpha01",
+      "estimatedRamMb": 2048,
+      "licenseName": "VERIFY-BEFORE-DISTRIBUTION",
+      "licenseUrl": "https://example.invalid/licenses/realesrgan-anime",
+      "description": "元画像の形状を保ちやすい高速な忠実モード候補です。最終配布モデルはAndroid実機検証後に確定します。",
+      "community": false,
+      "controls": []
+    },
+    {
+      "id": "pisa-sr",
+      "displayName": "PiSA-SR",
+      "mode": "BALANCED",
+      "version": "candidate-1",
+      "backend": "MNN",
+      "downloadUrl": "https://example.invalid/models/pisa-sr/model.bin",
+      "fileSizeBytes": 2000000,
+      "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "supportedScales": [2, 4],
+      "minAppVersion": "0.1.0-alpha01",
+      "estimatedRamMb": 8000,
+      "licenseName": "VERIFY-CONVERTED-WEIGHTS",
+      "licenseUrl": "https://example.invalid/licenses/pisa-sr",
+      "description": "忠実度と生成ディテールのバランスを狙うKiraEnhanceの必須モデルです。変換済みWeightの配布条件確認後に有効化します。",
+      "community": false,
+      "controls": [
+        {
+          "id": "fidelity",
+          "label": "忠実度",
+          "type": "SLIDER",
+          "min": 0.0,
+          "max": 1.0,
+          "defaultValue": 0.65,
+          "choices": []
+        }
+      ]
+    },
+    {
+      "id": "hat-s",
+      "displayName": "HAT-S candidate",
+      "mode": "DETAIL",
+      "version": "candidate-1",
+      "backend": "MNN",
+      "downloadUrl": "https://example.invalid/models/hat-s/model.bin",
+      "fileSizeBytes": 3000000,
+      "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+      "supportedScales": [4],
+      "minAppVersion": "0.1.0-alpha01",
+      "estimatedRamMb": 4096,
+      "licenseName": "VERIFY-BEFORE-DISTRIBUTION",
+      "licenseUrl": "https://example.invalid/licenses/hat-s",
+      "description": "髪、レース、衣装などの細かな質感を重視する高精細モード候補です。",
+      "community": false,
+      "controls": []
+    },
+    {
+      "id": "ultrasharp",
+      "displayName": "4x-UltraSharp",
+      "mode": "ULTRASHARP",
+      "version": "4x-candidate",
+      "backend": "NCNN",
+      "downloadUrl": "https://example.invalid/models/ultrasharp/model.bin",
+      "fileSizeBytes": 4000000,
+      "sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+      "supportedScales": [4],
+      "minAppVersion": "0.1.0-alpha01",
+      "estimatedRamMb": 2048,
+      "licenseName": "CC BY-NC-SA 4.0",
+      "licenseUrl": "https://creativecommons.org/licenses/by-nc-sa/4.0/",
+      "description": "使い慣れた強めのシャープ感を狙うCommunity Modelです。非商用条件を明示して扱います。",
+      "community": true,
+      "controls": []
+    }
+  ]
+}

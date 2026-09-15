@@ -45,9 +45,19 @@ class ModelManifestParser(
         requireSafeSegment(model.id, "model id")
         require(model.displayName.isNotBlank()) { "displayName must not be blank for ${model.id}" }
         requireSafeSegment(model.version, "model version")
-        require(model.downloadUrl.isNotBlank()) { "downloadUrl must not be blank for ${model.id}" }
-        require(model.fileSizeBytes > 0) { "fileSizeBytes must be positive for ${model.id}" }
-        require(SHA_256.matches(model.sha256)) { "Invalid SHA-256 for ${model.id}" }
+        require(model.artifacts.isNotEmpty()) { "artifacts must not be empty for ${model.id}" }
+        require(model.artifacts.size <= MAX_ARTIFACTS) { "Too many artifacts for ${model.id}" }
+
+        val duplicateArtifacts = model.artifacts
+            .groupingBy { it.fileName }
+            .eachCount()
+            .filterValues { it > 1 }
+            .keys
+        require(duplicateArtifacts.isEmpty()) {
+            "Duplicate artifact file names in ${model.id}: ${duplicateArtifacts.joinToString()}"
+        }
+        model.artifacts.forEach { artifact -> validateArtifact(model.id, artifact) }
+
         require(model.supportedScales.isNotEmpty()) { "supportedScales must not be empty for ${model.id}" }
         require(model.supportedScales.all { it == 2 || it == 4 }) {
             "Only 2x and 4x scales are supported for ${model.id}"
@@ -66,6 +76,13 @@ class ModelManifestParser(
         require(duplicateControls.isEmpty()) { "Duplicate control ids in ${model.id}" }
 
         model.controls.forEach { control -> validateControl(model.id, control) }
+    }
+
+    private fun validateArtifact(modelId: String, artifact: ModelArtifactDescriptor) {
+        requireSafeSegment(artifact.fileName, "artifact file name")
+        require(artifact.downloadUrl.isNotBlank()) { "Artifact URL must not be blank in $modelId" }
+        require(artifact.fileSizeBytes > 0) { "Artifact size must be positive in $modelId" }
+        require(SHA_256.matches(artifact.sha256)) { "Invalid SHA-256 for ${artifact.fileName} in $modelId" }
     }
 
     private fun validateControl(modelId: String, control: ModelControlDescriptor) {
@@ -103,6 +120,7 @@ class ModelManifestParser(
     }
 
     private companion object {
+        const val MAX_ARTIFACTS = 16
         val SHA_256 = Regex("^[A-Fa-f0-9]{64}$")
         val SAFE_SEGMENT = Regex("^[A-Za-z0-9][A-Za-z0-9._-]*$")
     }

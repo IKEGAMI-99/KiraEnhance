@@ -86,7 +86,7 @@ Goal: best default balance between faithfulness and generated detail.
 
 Required model family: PiSA-SR.
 
-PiSA-SR is the only model family treated as a required target for v1 architecture. If full mobile conversion requires staged optimization, the application architecture must still reserve this mode and its model-specific controls.
+PiSA-SR is the only model family that is mandatory for the KiraEnhance v1 release. The app architecture and implementation plan must therefore include a real on-device PiSA-SR path, not merely a placeholder. If mobile conversion exposes blockers, those blockers must be resolved before v1 is considered complete.
 
 Expected advanced controls include, where supported by the converted implementation:
 - fidelity / pixel preservation strength
@@ -425,9 +425,8 @@ Performance takes priority over decorative animation. UI effects must not meanin
 Required for v1:
 - Android app shell in Kotlin/Compose
 - native JNI/NDK engine abstraction
-- at least one fully working local model backend
-- architecture ready for PiSA-SR
-- PiSA-SR integration target retained as required product goal
+- at least one fully working local model backend early in development
+- working on-device PiSA-SR integration before v1 release
 - 2x and 4x output workflow
 - automatic tiling
 - model download/verification/removal
@@ -515,15 +514,15 @@ Compare model changes for geometry preservation, artifacts, seams, and detail co
 KiraEnhance v1 is ready for release when:
 
 1. The reference Snapdragon 8 Elite class device can complete repeated on-device inference without crashes or unbounded memory growth.
-2. At least one production-quality model works end-to-end through the common engine interface.
-3. PiSA-SR has either a working mobile implementation or a documented blocking compatibility issue plus an integration path that does not require redesigning the app architecture.
-4. 2x and 4x processing work with automatic tile fallback.
-5. Original/enhanced comparison remains coordinate-synchronized during pan and zoom.
-6. Model files are verified before use.
-7. App update verification is implemented.
-8. Log export contains enough information to diagnose native/model failures without including image data.
-9. A clean install can reach a successful enhancement result using only the documented beginner flow.
-10. License/attribution requirements are verified for every model file that KiraEnhance itself redistributes.
+2. PiSA-SR runs on-device through the common engine interface and produces a saved result from the beginner flow.
+3. 2x and 4x processing work with automatic tile fallback.
+4. Original/enhanced comparison remains coordinate-synchronized during pan and zoom.
+5. Model files are verified before use.
+6. App update verification is implemented.
+7. Log export contains enough information to diagnose native/model failures without including image data.
+8. A clean install can reach a successful enhancement result using only the documented beginner flow.
+9. License/attribution requirements are verified for every model file that KiraEnhance itself redistributes.
+10. UltraSharp is either legally redistributable with the required attribution/terms or installable only through a user-supplied model path.
 
 ## 23. Future extensions
 

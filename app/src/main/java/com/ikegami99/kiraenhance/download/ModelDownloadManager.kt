@@ -14,7 +14,11 @@ class ModelDownloadManager(
     context: Context,
     private val workManager: WorkManager = WorkManager.getInstance(context.applicationContext),
 ) {
-    fun enqueue(model: ModelDescriptor, wifiOnly: Boolean): UUID {
+    fun enqueue(
+        model: ModelDescriptor,
+        wifiOnly: Boolean,
+        replaceExisting: Boolean = false,
+    ): UUID {
         val constraints = Constraints.Builder()
             .setRequiredNetworkType(networkTypeFor(wifiOnly))
             .build()
@@ -36,7 +40,7 @@ class ModelDownloadManager(
 
         workManager.enqueueUniqueWork(
             workName(model),
-            ExistingWorkPolicy.KEEP,
+            workPolicyFor(replaceExisting),
             request,
         )
         return request.id
@@ -48,5 +52,8 @@ class ModelDownloadManager(
 
         internal fun workName(model: ModelDescriptor): String =
             "model-download-${model.id}-${model.version}"
+
+        internal fun workPolicyFor(replaceExisting: Boolean): ExistingWorkPolicy =
+            if (replaceExisting) ExistingWorkPolicy.REPLACE else ExistingWorkPolicy.KEEP
     }
 }

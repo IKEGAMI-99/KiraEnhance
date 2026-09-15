@@ -47,11 +47,8 @@ int g_gpu_users = 0;
 
 bool acquire_gpu() {
     std::lock_guard<std::mutex> guard(g_gpu_mutex);
-
     if (!g_gpu_instance_active) {
-        if (ncnn::create_gpu_instance() != 0) {
-            return false;
-        }
+        if (ncnn::create_gpu_instance() != 0) return false;
         g_gpu_instance_active = true;
     }
 
@@ -69,9 +66,7 @@ bool acquire_gpu() {
 
 void release_gpu() {
     std::lock_guard<std::mutex> guard(g_gpu_mutex);
-    if (g_gpu_users <= 0) {
-        return;
-    }
+    if (g_gpu_users <= 0) return;
 
     --g_gpu_users;
     if (g_gpu_users == 0 && g_gpu_instance_active) {
@@ -82,14 +77,9 @@ void release_gpu() {
 
 int query_gpu_count() {
     std::lock_guard<std::mutex> guard(g_gpu_mutex);
+    if (g_gpu_instance_active) return ncnn::get_gpu_count();
+    if (ncnn::create_gpu_instance() != 0) return 0;
 
-    if (g_gpu_instance_active) {
-        return ncnn::get_gpu_count();
-    }
-
-    if (ncnn::create_gpu_instance() != 0) {
-        return 0;
-    }
     const int count = ncnn::get_gpu_count();
     ncnn::destroy_gpu_instance();
     return count;
@@ -101,36 +91,22 @@ int query_gpu_count() { return 0; }
 #endif
 
 std::string to_string(JNIEnv* env, jstring value) {
-    if (value == nullptr) {
-        return {};
-    }
-
+    if (value == nullptr) return {};
     const char* chars = env->GetStringUTFChars(value, nullptr);
-    if (chars == nullptr) {
-        return {};
-    }
-
+    if (chars == nullptr) return {};
     std::string result(chars);
     env->ReleaseStringUTFChars(value, chars);
     return result;
 }
 
-jlongArray make_load_result(
-    JNIEnv* env,
-    jlong handle,
-    NativeError error,
-    bool gpu_enabled
-) {
-    jlong values[3] = {
+jlongArray make_load_result(JNIEnv* env, jlong handle, NativeError error, bool gpu_enabled) {
+    const jlong values[3] = {
         handle,
         static_cast<jlong>(error),
         gpu_enabled ? 1L : 0L,
     };
-
     jlongArray array = env->NewLongArray(3);
-    if (array != nullptr) {
-        env->SetLongArrayRegion(array, 0, 3, values);
-    }
+    if (array != nullptr) env->SetLongArrayRegion(array, 0, 3, values);
     return array;
 }
 
@@ -142,18 +118,15 @@ jlongArray make_inference_result(
     int output_row_stride,
     bool gpu_used
 ) {
-    jlong values[5] = {
+    const jlong values[5] = {
         static_cast<jlong>(error),
         static_cast<jlong>(output_width),
         static_cast<jlong>(output_height),
         static_cast<jlong>(output_row_stride),
         gpu_used ? 1L : 0L,
     };
-
     jlongArray array = env->NewLongArray(5);
-    if (array != nullptr) {
-        env->SetLongArrayRegion(array, 0, 5, values);
-    }
+    if (array != nullptr) env->SetLongArrayRegion(array, 0, 5, values);
     return array;
 }
 
@@ -166,12 +139,8 @@ jlong to_handle(ModelContext* context) {
 }
 
 bool checked_multiply(jlong a, jlong b, jlong* result) {
-    if (a < 0 || b < 0 || result == nullptr) {
-        return false;
-    }
-    if (a != 0 && b > std::numeric_limits<jlong>::max() / a) {
-        return false;
-    }
+    if (a < 0 || b < 0 || result == nullptr) return false;
+    if (a != 0 && b > std::numeric_limits<jlong>::max() / a) return false;
     *result = a * b;
     return true;
 }
@@ -193,7 +162,6 @@ unsigned char sample_alpha_bilinear(
 ) {
     const float source_x = (static_cast<float>(output_x) + 0.5f) / scale - 0.5f;
     const float source_y = (static_cast<float>(output_y) + 0.5f) / scale - 0.5f;
-
     const float clamped_x = std::max(0.f, std::min(static_cast<float>(width - 1), source_x));
     const float clamped_y = std::max(0.f, std::min(static_cast<float>(height - 1), source_y));
 
@@ -205,13 +173,86 @@ unsigned char sample_alpha_bilinear(
     const float fy = clamped_y - y0;
 
     const auto alpha_at = [&](int x, int y) -> float {
-        return static_cast<float>(rgba[y * row_stride + x * 4 + 3]);
+        return static_cast<float>(rgba[static_cast<size_t>(y) * row_stride + x * 4 + 3]);
     };
 
     const float top = alpha_at(x0, y0) * (1.f - fx) + alpha_at(x1, y0) * fx;
     const float bottom = alpha_at(x0, y1) * (1.f - fx) + alpha_at(x1, y1) * fx;
     const float alpha = top * (1.f - fy) + bottom * fy;
     return static_cast<unsigned char>(std::max(0.f, std::min(255.f, alpha + 0.5f)));
+}
+
+NativeError infer_rgba(
+    ModelContext* context,
+    const unsigned char* input_ptr,
+    int width,
+    int height,
+    int input_row_stride,
+    unsigned char* output_ptr,
+    int output_width,
+    int output_height,
+    int output_row_stride
+) {
+    ncnn::Mat input = ncnn::Mat::from_pixels(
+        input_ptr,
+        ncnn::Mat::PIXEL_RGBA2RGB,
+        width,
+        height,
+        input_row_stride
+    );
+    if (input.empty()) return ERROR_OUT_OF_MEMORY;
+
+    const float norm_values[3] = {1.f / 255.f, 1.f / 255.f, 1.f / 255.f};
+    input.substract_mean_normalize(nullptr, norm_values);
+
+    if (context->cancelled.load(std::memory_order_relaxed)) return ERROR_CANCELLED;
+
+    ncnn::Extractor extractor = context->net.create_extractor();
+    if (extractor.input(context->input_blob_name.c_str(), input) != 0) {
+        return ERROR_INFERENCE_FAILED;
+    }
+
+    ncnn::Mat output;
+    if (extractor.extract(context->output_blob_name.c_str(), output) != 0 || output.empty()) {
+        return ERROR_INFERENCE_FAILED;
+    }
+
+    if (context->cancelled.load(std::memory_order_relaxed)) return ERROR_CANCELLED;
+
+    if (output.w != output_width || output.h != output_height || output.c < 3
+        || output.elempack != 1 || output.elemsize != sizeof(float)) {
+        return ERROR_INFERENCE_FAILED;
+    }
+
+    const float* red = output.channel(0);
+    const float* green = output.channel(1);
+    const float* blue = output.channel(2);
+    if (red == nullptr || green == nullptr || blue == nullptr) return ERROR_INFERENCE_FAILED;
+
+    for (int y = 0; y < output_height; ++y) {
+        if (context->cancelled.load(std::memory_order_relaxed)) return ERROR_CANCELLED;
+
+        unsigned char* destination_row = output_ptr + static_cast<size_t>(y) * output_row_stride;
+        const size_t tensor_row = static_cast<size_t>(y) * output_width;
+        for (int x = 0; x < output_width; ++x) {
+            const size_t tensor_index = tensor_row + x;
+            unsigned char* destination = destination_row + static_cast<size_t>(x) * 4;
+            destination[0] = to_u8(red[tensor_index]);
+            destination[1] = to_u8(green[tensor_index]);
+            destination[2] = to_u8(blue[tensor_index]);
+            destination[3] = sample_alpha_bilinear(
+                input_ptr,
+                width,
+                height,
+                input_row_stride,
+                x,
+                y,
+                context->native_scale
+            );
+        }
+    }
+
+    return ERROR_NONE;
 }
 
 }  // namespace
@@ -222,11 +263,9 @@ Java_com_ikegami99_kiraenhance_inference_ncnn_NcnnNativeBridge_nativeRuntimeInfo
     jobject /* thiz */
 ) {
     const int gpu_count = query_gpu_count();
-
-    std::string info = "ncnn=" + std::to_string(NCNN_VERSION_NUMBER)
+    const std::string info = "ncnn=" + std::to_string(NCNN_VERSION_NUMBER)
         + ";vulkan=" + std::string(NCNN_VULKAN ? "1" : "0")
         + ";gpuCount=" + std::to_string(gpu_count);
-
     return env->NewStringUTF(info.c_str());
 }
 
@@ -254,16 +293,12 @@ Java_com_ikegami99_kiraenhance_inference_ncnn_NcnnNativeBridge_nativeLoadModel(
 
     bool gpu_enabled = false;
 #if NCNN_VULKAN
-    if (prefer_gpu == JNI_TRUE) {
-        gpu_enabled = acquire_gpu();
-    }
+    if (prefer_gpu == JNI_TRUE) gpu_enabled = acquire_gpu();
 #endif
 
     std::unique_ptr<ModelContext> context(new (std::nothrow) ModelContext());
     if (!context) {
-        if (gpu_enabled) {
-            release_gpu();
-        }
+        if (gpu_enabled) release_gpu();
         return make_load_result(env, 0L, ERROR_INTERNAL, false);
     }
 
@@ -278,34 +313,23 @@ Java_com_ikegami99_kiraenhance_inference_ncnn_NcnnNativeBridge_nativeLoadModel(
     context->net.opt.use_fp16_arithmetic = false;
 
 #if NCNN_VULKAN
-    if (gpu_enabled) {
-        context->net.set_vulkan_device(0);
-    }
+    if (gpu_enabled) context->net.set_vulkan_device(0);
 #endif
 
     if (context->net.load_param(param_path.c_str()) != 0) {
         context.reset();
-        if (gpu_enabled) {
-            release_gpu();
-        }
+        if (gpu_enabled) release_gpu();
         return make_load_result(env, 0L, ERROR_LOAD_PARAM_FAILED, false);
     }
 
     if (context->net.load_model(bin_path.c_str()) != 0) {
         context.reset();
-        if (gpu_enabled) {
-            release_gpu();
-        }
+        if (gpu_enabled) release_gpu();
         return make_load_result(env, 0L, ERROR_LOAD_MODEL_FAILED, false);
     }
 
     ModelContext* raw_context = context.release();
-    return make_load_result(
-        env,
-        to_handle(raw_context),
-        ERROR_NONE,
-        gpu_enabled
-    );
+    return make_load_result(env, to_handle(raw_context), ERROR_NONE, gpu_enabled);
 }
 
 extern "C" JNIEXPORT jlongArray JNICALL
@@ -322,9 +346,15 @@ Java_com_ikegami99_kiraenhance_inference_ncnn_NcnnNativeBridge_nativeInfer(
 ) {
     ModelContext* context = from_handle(handle);
     if (context == nullptr || input_pixels == nullptr || output_pixels == nullptr
-        || width <= 0 || height <= 0 || input_row_stride < width * 4
+        || width <= 0 || height <= 0 || input_row_stride <= 0
         || context->native_scale <= 0 || output_capacity_bytes <= 0) {
         return make_inference_result(env, ERROR_INVALID_ARGUMENT, 0, 0, 0, false);
+    }
+
+    const jlong minimum_input_stride = static_cast<jlong>(width) * 4;
+    if (minimum_input_stride > std::numeric_limits<jint>::max()
+        || static_cast<jlong>(input_row_stride) < minimum_input_stride) {
+        return make_inference_result(env, ERROR_INVALID_ARGUMENT, 0, 0, 0, context->gpu_enabled);
     }
 
     auto* input_ptr = static_cast<unsigned char*>(env->GetDirectBufferAddress(input_pixels));
@@ -332,13 +362,13 @@ Java_com_ikegami99_kiraenhance_inference_ncnn_NcnnNativeBridge_nativeInfer(
     const jlong input_capacity = env->GetDirectBufferCapacity(input_pixels);
     const jlong actual_output_capacity = env->GetDirectBufferCapacity(output_pixels);
     if (input_ptr == nullptr || output_ptr == nullptr || input_capacity < 0 || actual_output_capacity < 0) {
-        return make_inference_result(env, ERROR_INVALID_ARGUMENT, 0, 0, 0, false);
+        return make_inference_result(env, ERROR_INVALID_ARGUMENT, 0, 0, 0, context->gpu_enabled);
     }
 
     jlong required_input_bytes = 0;
     if (!checked_multiply(static_cast<jlong>(input_row_stride), static_cast<jlong>(height), &required_input_bytes)
         || required_input_bytes > input_capacity) {
-        return make_inference_result(env, ERROR_BUFFER_TOO_SMALL, 0, 0, 0, false);
+        return make_inference_result(env, ERROR_BUFFER_TOO_SMALL, 0, 0, 0, context->gpu_enabled);
     }
 
     jlong output_width_long = 0;
@@ -364,94 +394,30 @@ Java_com_ikegami99_kiraenhance_inference_ncnn_NcnnNativeBridge_nativeInfer(
     const int output_row_stride = static_cast<int>(output_row_stride_long);
 
     context->cancelled.store(false, std::memory_order_relaxed);
+    const NativeError result = infer_rgba(
+        context,
+        input_ptr,
+        width,
+        height,
+        input_row_stride,
+        output_ptr,
+        output_width,
+        output_height,
+        output_row_stride
+    );
 
-    try {
-        ncnn::Mat input = ncnn::Mat::from_pixels(
-            input_ptr,
-            ncnn::Mat::PIXEL_RGBA2RGB,
-            width,
-            height,
-            input_row_stride
-        );
-        if (input.empty()) {
-            return make_inference_result(env, ERROR_OUT_OF_MEMORY, 0, 0, 0, context->gpu_enabled);
-        }
-
-        const float norm_values[3] = {
-            1.f / 255.f,
-            1.f / 255.f,
-            1.f / 255.f,
-        };
-        input.substract_mean_normalize(nullptr, norm_values);
-
-        if (context->cancelled.load(std::memory_order_relaxed)) {
-            return make_inference_result(env, ERROR_CANCELLED, 0, 0, 0, context->gpu_enabled);
-        }
-
-        ncnn::Extractor extractor = context->net.create_extractor();
-        if (extractor.input(context->input_blob_name.c_str(), input) != 0) {
-            return make_inference_result(env, ERROR_INFERENCE_FAILED, 0, 0, 0, context->gpu_enabled);
-        }
-
-        ncnn::Mat output;
-        if (extractor.extract(context->output_blob_name.c_str(), output) != 0 || output.empty()) {
-            return make_inference_result(env, ERROR_INFERENCE_FAILED, 0, 0, 0, context->gpu_enabled);
-        }
-
-        if (context->cancelled.load(std::memory_order_relaxed)) {
-            return make_inference_result(env, ERROR_CANCELLED, 0, 0, 0, context->gpu_enabled);
-        }
-
-        if (output.w != output_width || output.h != output_height || output.c < 3
-            || output.elempack != 1 || output.elemsize != sizeof(float)) {
-            return make_inference_result(env, ERROR_INFERENCE_FAILED, 0, 0, 0, context->gpu_enabled);
-        }
-
-        const float* red = output.channel(0);
-        const float* green = output.channel(1);
-        const float* blue = output.channel(2);
-        if (red == nullptr || green == nullptr || blue == nullptr) {
-            return make_inference_result(env, ERROR_INFERENCE_FAILED, 0, 0, 0, context->gpu_enabled);
-        }
-
-        for (int y = 0; y < output_height; ++y) {
-            if (context->cancelled.load(std::memory_order_relaxed)) {
-                return make_inference_result(env, ERROR_CANCELLED, 0, 0, 0, context->gpu_enabled);
-            }
-
-            unsigned char* destination_row = output_ptr + static_cast<size_t>(y) * output_row_stride;
-            const size_t tensor_row = static_cast<size_t>(y) * output_width;
-            for (int x = 0; x < output_width; ++x) {
-                const size_t tensor_index = tensor_row + x;
-                unsigned char* destination = destination_row + static_cast<size_t>(x) * 4;
-                destination[0] = to_u8(red[tensor_index]);
-                destination[1] = to_u8(green[tensor_index]);
-                destination[2] = to_u8(blue[tensor_index]);
-                destination[3] = sample_alpha_bilinear(
-                    input_ptr,
-                    width,
-                    height,
-                    input_row_stride,
-                    x,
-                    y,
-                    context->native_scale
-                );
-            }
-        }
-
-        return make_inference_result(
-            env,
-            ERROR_NONE,
-            output_width,
-            output_height,
-            output_row_stride,
-            context->gpu_enabled
-        );
-    } catch (const std::bad_alloc&) {
-        return make_inference_result(env, ERROR_OUT_OF_MEMORY, 0, 0, 0, context->gpu_enabled);
-    } catch (...) {
-        return make_inference_result(env, ERROR_INTERNAL, 0, 0, 0, context->gpu_enabled);
+    if (result != ERROR_NONE) {
+        return make_inference_result(env, result, 0, 0, 0, context->gpu_enabled);
     }
+
+    return make_inference_result(
+        env,
+        ERROR_NONE,
+        output_width,
+        output_height,
+        output_row_stride,
+        context->gpu_enabled
+    );
 }
 
 extern "C" JNIEXPORT void JNICALL
@@ -461,15 +427,11 @@ Java_com_ikegami99_kiraenhance_inference_ncnn_NcnnNativeBridge_nativeUnload(
     jlong handle
 ) {
     ModelContext* context = from_handle(handle);
-    if (context == nullptr) {
-        return;
-    }
+    if (context == nullptr) return;
 
     const bool gpu_enabled = context->gpu_enabled;
     delete context;
-    if (gpu_enabled) {
-        release_gpu();
-    }
+    if (gpu_enabled) release_gpu();
 }
 
 extern "C" JNIEXPORT void JNICALL
@@ -479,7 +441,5 @@ Java_com_ikegami99_kiraenhance_inference_ncnn_NcnnNativeBridge_nativeCancel(
     jlong handle
 ) {
     ModelContext* context = from_handle(handle);
-    if (context != nullptr) {
-        context->cancelled.store(true, std::memory_order_relaxed);
-    }
+    if (context != nullptr) context->cancelled.store(true, std::memory_order_relaxed);
 }

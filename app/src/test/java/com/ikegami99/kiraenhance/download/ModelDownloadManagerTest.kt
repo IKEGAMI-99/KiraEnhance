@@ -38,20 +38,37 @@ class ModelDownloadManagerTest {
         )
     }
 
-    private fun model() = ModelDescriptor(
+    @Test
+    fun serializesEveryArtifactIntoWorkerData() {
+        val model = model(
+            artifacts = listOf(
+                artifact("model.param", 10_000L, "a"),
+                artifact("model.bin", 33_400_000L, "b"),
+            ),
+        )
+
+        val data = ModelDownloadManager.inputDataFor(model)
+
+        assertEquals(model.id, data.getString(ModelDownloadWorker.KEY_MODEL_ID))
+        assertEquals(model.version, data.getString(ModelDownloadWorker.KEY_VERSION))
+        assertEquals(2, data.getInt(ModelDownloadWorker.KEY_ARTIFACT_COUNT, -1))
+        assertEquals("model.param", data.getString(ModelDownloadWorker.artifactFileNameKey(0)))
+        assertEquals("https://example.invalid/model.param", data.getString(ModelDownloadWorker.artifactUrlKey(0)))
+        assertEquals(10_000L, data.getLong(ModelDownloadWorker.artifactSizeKey(0), -1L))
+        assertEquals("a".repeat(64), data.getString(ModelDownloadWorker.artifactSha256Key(0)))
+        assertEquals("model.bin", data.getString(ModelDownloadWorker.artifactFileNameKey(1)))
+        assertEquals(33_400_000L, data.getLong(ModelDownloadWorker.artifactSizeKey(1), -1L))
+    }
+
+    private fun model(
+        artifacts: List<ModelArtifactDescriptor> = listOf(artifact("model.mnn", 2_000_000L, "b")),
+    ) = ModelDescriptor(
         id = "pisa-sr",
         displayName = "Kira Balance",
         mode = EnhancementMode.BALANCED,
         version = "candidate-1",
         backend = ModelBackend.MNN,
-        artifacts = listOf(
-            ModelArtifactDescriptor(
-                fileName = "model.mnn",
-                downloadUrl = "https://example.invalid/pisa-sr.mnn",
-                fileSizeBytes = 2_000_000,
-                sha256 = "b".repeat(64),
-            ),
-        ),
+        artifacts = artifacts,
         supportedScales = listOf(2, 4),
         minAppVersion = "0.1.0-alpha01",
         estimatedRamMb = 8_000,
@@ -69,5 +86,12 @@ class ModelDownloadManagerTest {
                 defaultValue = 0.65,
             ),
         ),
+    )
+
+    private fun artifact(fileName: String, size: Long, shaCharacter: String) = ModelArtifactDescriptor(
+        fileName = fileName,
+        downloadUrl = "https://example.invalid/$fileName",
+        fileSizeBytes = size,
+        sha256 = shaCharacter.repeat(64),
     )
 }

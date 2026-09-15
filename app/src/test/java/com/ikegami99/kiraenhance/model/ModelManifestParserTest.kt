@@ -83,6 +83,15 @@ class ModelManifestParserTest {
         }
     }
 
+    @Test
+    fun rejectsPathTraversalModelId() {
+        val json = validManifestJson().replace("\"id\": \"realesrgan-anime\"", "\"id\": \"..\"")
+
+        assertThrows(IllegalArgumentException::class.java) {
+            parser.parse(json)
+        }
+    }
+
     private fun validManifestJson(): String =
         """
         {

@@ -10,6 +10,7 @@ import com.ikegami99.kiraenhance.inference.UpscaleInput
 import com.ikegami99.kiraenhance.inference.UpscaleOutput
 import com.ikegami99.kiraenhance.inference.UpscaleResult
 import com.ikegami99.kiraenhance.inference.UpscaleSettings
+import com.ikegami99.kiraenhance.inference.tile.AdaptiveTileSizer
 import com.ikegami99.kiraenhance.inference.tile.IntRect
 import com.ikegami99.kiraenhance.inference.tile.TilePlanner
 import java.nio.ByteBuffer
@@ -265,7 +266,46 @@ class NcnnUpscaleEngine(
         outputRowStride: Int,
         outputBytes: Int,
     ): UpscaleResult {
-        val tileSize = requireNotNull(settings.tileSize)
+        val output = allocateDirectOrNull(outputBytes)
+            ?: return UpscaleResult.Failed(outOfMemoryError("Unable to allocate tiled output pixel buffer"))
+        var tileSize = requireNotNull(settings.tileSize)
+
+        while (true) {
+            val result = runTiledPass(
+                handle = handle,
+                request = request,
+                input = input,
+                settings = settings,
+                tileSize = tileSize,
+                outputWidth = outputWidth,
+                outputHeight = outputHeight,
+                outputRowStride = outputRowStride,
+                outputBytes = outputBytes,
+                output = output,
+            )
+
+            if (result is UpscaleResult.Failed && result.error.code == EngineErrorCode.OUT_OF_MEMORY) {
+                val nextTileSize = AdaptiveTileSizer.nextSmaller(tileSize) ?: return result
+                tileSize = nextTileSize
+                continue
+            }
+
+            return result
+        }
+    }
+
+    private fun runTiledPass(
+        handle: Long,
+        request: ModelLoadRequest,
+        input: UpscaleInput,
+        settings: UpscaleSettings,
+        tileSize: Int,
+        outputWidth: Int,
+        outputHeight: Int,
+        outputRowStride: Int,
+        outputBytes: Int,
+        output: ByteBuffer,
+    ): UpscaleResult {
         val tiles = TilePlanner.plan(
             imageWidth = input.width,
             imageHeight = input.height,
@@ -273,8 +313,6 @@ class NcnnUpscaleEngine(
             padding = request.capabilities.prePadding,
             scale = settings.outputScale,
         )
-        val output = allocateDirectOrNull(outputBytes)
-            ?: return UpscaleResult.Failed(outOfMemoryError("Unable to allocate tiled output pixel buffer"))
 
         var usedGpuForAllTiles = true
         for (tile in tiles) {

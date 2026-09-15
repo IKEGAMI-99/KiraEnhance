@@ -9,6 +9,7 @@ import com.ikegami99.kiraenhance.util.Sha256
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
+import java.lang.Math.addExact
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
@@ -25,96 +26,130 @@ class ModelDownloadWorker(
     override fun doWork(): Result {
         val modelId = inputData.getString(KEY_MODEL_ID) ?: return failure("Missing model id")
         val version = inputData.getString(KEY_VERSION) ?: return failure("Missing model version")
-        val url = inputData.getString(KEY_URL) ?: return failure("Missing download URL")
-        val expectedSha = inputData.getString(KEY_SHA256) ?: return failure("Missing SHA-256")
-        val expectedSize = inputData.getLong(KEY_FILE_SIZE_BYTES, -1L)
-        if (expectedSize <= 0L) return failure("Invalid model file size")
-        if (!url.startsWith("https://", ignoreCase = true)) return failure("Model URL must use HTTPS")
-
-        val finalFile = try {
-            store.modelFile(modelId, version)
-        } catch (error: IllegalArgumentException) {
-            return failure("Unsafe model path")
-        }
-        val partFile = try {
-            store.partialFile(modelId, version)
-        } catch (error: IllegalArgumentException) {
-            return failure("Unsafe model path")
+        val artifacts = readArtifacts() ?: return failure("Invalid model artifact metadata")
+        val totalExpected = try {
+            artifacts.fold(0L) { total, artifact -> addExact(total, artifact.expectedSize) }
+        } catch (_: ArithmeticException) {
+            return failure("Model bundle is too large")
         }
 
         return try {
-            if (isValidCompletedFile(finalFile, expectedSize, expectedSha)) {
-                return Result.success(successData(modelId, expectedSize))
-            }
-
-            preparePartialFile(partFile, expectedSize, expectedSha, finalFile, modelId)?.let {
-                return it
-            }
-
-            download(
-                modelId = modelId,
-                url = url,
-                expectedSize = expectedSize,
-                partFile = partFile,
-            )?.let { return it }
-
-            if (partFile.length() != expectedSize) {
-                return if (partFile.length() < expectedSize) {
-                    Result.retry()
-                } else {
-                    partFile.delete()
-                    failure("Downloaded file is larger than expected")
+            var completedBytes = 0L
+            artifacts.forEach { artifact ->
+                val finalFile = try {
+                    store.artifactFile(modelId, version, artifact.fileName)
+                } catch (_: IllegalArgumentException) {
+                    return failure("Unsafe model path")
                 }
+                val partFile = try {
+                    store.partialFile(modelId, version, artifact.fileName)
+                } catch (_: IllegalArgumentException) {
+                    return failure("Unsafe model path")
+                }
+
+                if (isValidCompletedFile(finalFile, artifact.expectedSize, artifact.expectedSha)) {
+                    completedBytes = addExact(completedBytes, artifact.expectedSize)
+                    setProgressAsync(progressData(modelId, completedBytes, totalExpected))
+                    return@forEach
+                }
+
+                if (preparePartialFile(partFile, artifact, finalFile)) {
+                    completedBytes = addExact(completedBytes, artifact.expectedSize)
+                    setProgressAsync(progressData(modelId, completedBytes, totalExpected))
+                    return@forEach
+                }
+
+                downloadArtifact(
+                    modelId = modelId,
+                    artifact = artifact,
+                    partFile = partFile,
+                    baseCompletedBytes = completedBytes,
+                    totalBundleBytes = totalExpected,
+                )?.let { return it }
+
+                if (partFile.length() != artifact.expectedSize) {
+                    return if (partFile.length() < artifact.expectedSize) {
+                        Result.retry()
+                    } else {
+                        partFile.delete()
+                        failure("Downloaded artifact is larger than expected: ${artifact.fileName}")
+                    }
+                }
+
+                if (!Sha256.matches(partFile, artifact.expectedSha)) {
+                    partFile.delete()
+                    return failure("SHA-256 verification failed: ${artifact.fileName}")
+                }
+
+                activate(partFile, finalFile)
+                completedBytes = addExact(completedBytes, artifact.expectedSize)
+                setProgressAsync(progressData(modelId, completedBytes, totalExpected))
             }
 
-            if (!Sha256.matches(partFile, expectedSha)) {
-                partFile.delete()
-                return failure("SHA-256 verification failed")
-            }
-
-            activate(partFile, finalFile)
-            setProgressAsync(progressData(modelId, expectedSize, expectedSize))
-            Result.success(successData(modelId, expectedSize))
-        } catch (error: IOException) {
+            Result.success(successData(modelId, totalExpected))
+        } catch (_: IOException) {
             Result.retry()
         } catch (error: RuntimeException) {
             failure(error.message ?: "Model download failed")
         }
     }
 
+    private fun readArtifacts(): List<DownloadArtifact>? {
+        val count = inputData.getInt(KEY_ARTIFACT_COUNT, -1)
+        if (count !in 1..MAX_ARTIFACTS) return null
+
+        val artifacts = ArrayList<DownloadArtifact>(count)
+        for (index in 0 until count) {
+            val fileName = inputData.getString(artifactFileNameKey(index)) ?: return null
+            val url = inputData.getString(artifactUrlKey(index)) ?: return null
+            val sha256 = inputData.getString(artifactSha256Key(index)) ?: return null
+            val size = inputData.getLong(artifactSizeKey(index), -1L)
+            if (size <= 0L || !url.startsWith("https://", ignoreCase = true)) return null
+            if (!SHA_256.matches(sha256)) return null
+
+            artifacts += DownloadArtifact(
+                fileName = fileName,
+                url = url,
+                expectedSize = size,
+                expectedSha = sha256,
+            )
+        }
+        if (artifacts.map { it.fileName }.distinct().size != artifacts.size) return null
+        return artifacts
+    }
+
     private fun preparePartialFile(
         partFile: File,
-        expectedSize: Long,
-        expectedSha: String,
+        artifact: DownloadArtifact,
         finalFile: File,
-        modelId: String,
-    ): Result? {
+    ): Boolean {
         partFile.parentFile?.mkdirs()
-        if (!partFile.exists()) return null
+        if (!partFile.exists()) return false
 
-        if (partFile.length() > expectedSize) {
+        if (partFile.length() > artifact.expectedSize) {
             partFile.delete()
-            return null
+            return false
         }
 
-        if (partFile.length() == expectedSize) {
-            if (Sha256.matches(partFile, expectedSha)) {
+        if (partFile.length() == artifact.expectedSize) {
+            if (Sha256.matches(partFile, artifact.expectedSha)) {
                 activate(partFile, finalFile)
-                return Result.success(successData(modelId, expectedSize))
+                return true
             }
             partFile.delete()
         }
-        return null
+        return false
     }
 
-    private fun download(
+    private fun downloadArtifact(
         modelId: String,
-        url: String,
-        expectedSize: Long,
+        artifact: DownloadArtifact,
         partFile: File,
+        baseCompletedBytes: Long,
+        totalBundleBytes: Long,
     ): Result? {
         var resumeOffset = if (partFile.exists()) partFile.length() else 0L
-        val requestBuilder = Request.Builder().url(url)
+        val requestBuilder = Request.Builder().url(artifact.url)
         if (resumeOffset > 0L) {
             requestBuilder.header("Range", "bytes=$resumeOffset-")
         }
@@ -124,7 +159,7 @@ class ModelDownloadWorker(
                 return Result.retry()
             }
             if (response.code !in listOf(200, 206)) {
-                return failure("Download failed with HTTP ${response.code}")
+                return failure("Download failed with HTTP ${response.code}: ${artifact.fileName}")
             }
 
             var append = resumeOffset > 0L && response.code == 206
@@ -157,12 +192,23 @@ class ModelDownloadWorker(
 
                         output.write(buffer, 0, read)
                         downloaded += read
+                        if (downloaded > artifact.expectedSize) {
+                            output.flush()
+                            partFile.delete()
+                            return failure("Downloaded artifact is larger than expected: ${artifact.fileName}")
+                        }
 
                         val now = System.nanoTime()
                         val enoughBytes = downloaded - lastReportedBytes >= PROGRESS_BYTES
                         val enoughTime = now - lastReportedAt >= PROGRESS_NANOS
                         if (enoughBytes && enoughTime) {
-                            setProgressAsync(progressData(modelId, downloaded, expectedSize))
+                            setProgressAsync(
+                                progressData(
+                                    modelId = modelId,
+                                    downloaded = baseCompletedBytes + downloaded,
+                                    total = totalBundleBytes,
+                                ),
+                            )
                             lastReportedBytes = downloaded
                             lastReportedAt = now
                         }
@@ -210,20 +256,32 @@ class ModelDownloadWorker(
     private fun failure(message: String): Result =
         Result.failure(Data.Builder().putString(KEY_ERROR, message).build())
 
+    private data class DownloadArtifact(
+        val fileName: String,
+        val url: String,
+        val expectedSize: Long,
+        val expectedSha: String,
+    )
+
     companion object {
         const val KEY_MODEL_ID = "modelId"
         const val KEY_VERSION = "version"
-        const val KEY_URL = "url"
-        const val KEY_SHA256 = "sha256"
-        const val KEY_FILE_SIZE_BYTES = "fileSizeBytes"
+        const val KEY_ARTIFACT_COUNT = "artifactCount"
 
         const val KEY_PROGRESS_MODEL_ID = "modelId"
         const val KEY_BYTES_DOWNLOADED = "bytesDownloaded"
         const val KEY_TOTAL_BYTES = "totalBytes"
         const val KEY_ERROR = "error"
 
+        internal fun artifactFileNameKey(index: Int) = "artifactFileName_$index"
+        internal fun artifactUrlKey(index: Int) = "artifactUrl_$index"
+        internal fun artifactSha256Key(index: Int) = "artifactSha256_$index"
+        internal fun artifactSizeKey(index: Int) = "artifactSize_$index"
+
+        private const val MAX_ARTIFACTS = 16
         private const val BUFFER_SIZE = 128 * 1024
         private const val PROGRESS_BYTES = 1024L * 1024L
         private const val PROGRESS_NANOS = 250_000_000L
+        private val SHA_256 = Regex("^[A-Fa-f0-9]{64}$")
     }
 }

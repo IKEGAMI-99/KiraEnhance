@@ -80,9 +80,17 @@ class ModelManagerViewModel(
             return
         }
 
-        val requestId = downloadManager.enqueue(card.model, _state.value.wifiOnly)
+        val reinstalling = card.installed
+        if (reinstalling && !removeLocalModelFiles(card)) return
+
+        val requestId = downloadManager.enqueue(
+            model = card.model,
+            wifiOnly = _state.value.wifiOnly,
+            replaceExisting = reinstalling,
+        )
         updateCard(modelId) {
             it.copy(
+                installed = if (reinstalling) false else it.installed,
                 downloadState = ModelDownloadState.QUEUED,
                 bytesDownloaded = 0L,
                 totalBytes = card.model.fileSizeBytes,
@@ -95,16 +103,7 @@ class ModelManagerViewModel(
     fun delete(modelId: String) {
         val card = _state.value.cards.firstOrNull { it.model.id == modelId } ?: return
         workManager.cancelUniqueWork(ModelDownloadManager.workName(card.model))
-
-        runCatching {
-            store.modelFile(card.model.id, card.model.version).parentFile?.deleteRecursively()
-            store.partialFile(card.model.id, card.model.version).delete()
-        }.onFailure { error ->
-            updateCard(modelId) {
-                it.copy(errorMessage = error.message ?: "モデルの削除に失敗しました")
-            }
-            return
-        }
+        if (!removeLocalModelFiles(card)) return
 
         updateCard(modelId) {
             it.copy(
@@ -117,9 +116,28 @@ class ModelManagerViewModel(
     }
 
     fun reinstall(modelId: String) {
-        delete(modelId)
         download(modelId)
     }
+
+    private fun removeLocalModelFiles(card: ModelCardUiState): Boolean = runCatching {
+        val versionDir = store.modelFile(card.model.id, card.model.version).parentFile
+        if (versionDir?.exists() == true && !versionDir.deleteRecursively()) {
+            error("モデル本体を削除できませんでした")
+        }
+
+        val partial = store.partialFile(card.model.id, card.model.version)
+        if (partial.exists() && !partial.delete()) {
+            error("一時ダウンロードファイルを削除できませんでした")
+        }
+    }.fold(
+        onSuccess = { true },
+        onFailure = { error ->
+            updateCard(card.model.id) {
+                it.copy(errorMessage = error.message ?: "モデルの削除に失敗しました")
+            }
+            false
+        },
+    )
 
     private fun refreshCards() {
         val capabilitiesResult = runCatching { deviceDetector.detect() }
@@ -189,6 +207,7 @@ class ModelManagerViewModel(
                 WorkInfo.State.FAILED -> {
                     updateCard(model.id) {
                         it.copy(
+                            installed = store.isInstalled(model.id, model.version),
                             downloadState = ModelDownloadState.FAILED,
                             errorMessage = info.outputData.getString(ModelDownloadWorker.KEY_ERROR)
                                 ?: "モデルのダウンロードに失敗しました",
@@ -200,6 +219,7 @@ class ModelManagerViewModel(
                 WorkInfo.State.CANCELLED -> {
                     updateCard(model.id) {
                         it.copy(
+                            installed = store.isInstalled(model.id, model.version),
                             downloadState = ModelDownloadState.IDLE,
                             bytesDownloaded = 0L,
                         )

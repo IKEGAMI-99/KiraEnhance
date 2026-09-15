@@ -46,6 +46,45 @@ class NcnnInferenceTest {
     }
 
     @Test
+    fun explicitTileSizeRunsMultipleInferencesAndComposesCoreRegions() {
+        val native = TiledFakeNcnnNativeApi(scale = 4)
+        val engine = NcnnUpscaleEngine(native)
+        engine.load(validRequest())
+
+        val result = engine.upscale(
+            input = rgbaInput(width = 65, height = 33),
+            settings = UpscaleSettings(outputScale = 4, useGpu = true, tileSize = 32),
+        )
+
+        assertTrue(result is UpscaleResult.Success)
+        result as UpscaleResult.Success
+        assertEquals(260, result.output.width)
+        assertEquals(132, result.output.height)
+        assertEquals(6, native.inferCalls)
+        assertEquals(
+            listOf(
+                42 to 33,
+                43 to 33,
+                11 to 33,
+                42 to 11,
+                43 to 11,
+                11 to 11,
+            ),
+            native.inputSizes,
+        )
+
+        val pixels = result.output.pixels
+        val rowStride = result.output.rowStrideBytes
+        assertEquals(1.toByte(), pixels.get(rgbaOffset(x = 0, y = 0, rowStride = rowStride)))
+        assertEquals(2.toByte(), pixels.get(rgbaOffset(x = 128, y = 0, rowStride = rowStride)))
+        assertEquals(3.toByte(), pixels.get(rgbaOffset(x = 256, y = 0, rowStride = rowStride)))
+        assertEquals(4.toByte(), pixels.get(rgbaOffset(x = 0, y = 128, rowStride = rowStride)))
+        assertEquals(5.toByte(), pixels.get(rgbaOffset(x = 128, y = 128, rowStride = rowStride)))
+        assertEquals(6.toByte(), pixels.get(rgbaOffset(x = 259, y = 131, rowStride = rowStride)))
+        assertEquals(0xff.toByte(), pixels.get(rgbaOffset(x = 259, y = 131, rowStride = rowStride) + 3))
+    }
+
+    @Test
     fun nonNativeScaleIsRejectedBeforeNativeInference() {
         val native = FakeNcnnNativeApi()
         val engine = NcnnUpscaleEngine(native)
@@ -150,6 +189,9 @@ class NcnnInferenceTest {
         )
     }
 
+    private fun rgbaOffset(x: Int, y: Int, rowStride: Int): Int =
+        y * rowStride + x * 4
+
     private class FakeNcnnNativeApi(
         private val inferenceResult: NcnnNativeInferenceResult = NcnnNativeInferenceResult(
             errorCode = NcnnNativeError.NONE,
@@ -198,6 +240,69 @@ class NcnnInferenceTest {
                 outputPixels.put(3, 0xff.toByte())
             }
             return inferenceResult
+        }
+
+        override fun unload(handle: Long) = Unit
+
+        override fun cancel(handle: Long) = Unit
+    }
+
+    private class TiledFakeNcnnNativeApi(
+        private val scale: Int,
+    ) : NcnnNativeApi {
+        var inferCalls: Int = 0
+        val inputSizes = mutableListOf<Pair<Int, Int>>()
+
+        override fun runtimeInfo(): NcnnRuntimeInfo = NcnnRuntimeInfo(
+            ncnnVersion = "20260526",
+            vulkanCompiled = true,
+            gpuCount = 1,
+        )
+
+        override fun loadModel(
+            paramPath: String,
+            binPath: String,
+            inputBlobName: String,
+            outputBlobName: String,
+            nativeScale: Int,
+            prePadding: Int,
+            preferGpu: Boolean,
+        ): NcnnNativeLoadResult = NcnnNativeLoadResult(
+            handle = 101L,
+            errorCode = NcnnNativeError.NONE,
+            gpuEnabled = true,
+        )
+
+        override fun infer(
+            handle: Long,
+            inputPixels: ByteBuffer,
+            width: Int,
+            height: Int,
+            inputRowStrideBytes: Int,
+            outputPixels: ByteBuffer,
+            outputCapacityBytes: Long,
+        ): NcnnNativeInferenceResult {
+            inferCalls += 1
+            inputSizes += width to height
+            val marker = inferCalls.toByte()
+            val outputWidth = width * scale
+            val outputHeight = height * scale
+            val rowStride = outputWidth * 4
+            var offset = 0
+            repeat(outputWidth * outputHeight) {
+                outputPixels.put(offset, marker)
+                outputPixels.put(offset + 1, 0)
+                outputPixels.put(offset + 2, 0)
+                outputPixels.put(offset + 3, 0xff.toByte())
+                offset += 4
+            }
+            return NcnnNativeInferenceResult(
+                errorCode = NcnnNativeError.NONE,
+                outputWidth = outputWidth,
+                outputHeight = outputHeight,
+                outputRowStrideBytes = rowStride,
+                gpuUsed = true,
+            )
         }
 
         override fun unload(handle: Long) = Unit

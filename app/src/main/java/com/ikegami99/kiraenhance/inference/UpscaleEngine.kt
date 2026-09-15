@@ -35,6 +35,20 @@ data class UpscaleSettings(
     }
 }
 
+data class UpscaleProgress(
+    val completedTiles: Int = 0,
+    val totalTiles: Int = 0,
+) {
+    init {
+        require(completedTiles >= 0) { "completedTiles must not be negative" }
+        require(totalTiles >= 0) { "totalTiles must not be negative" }
+        require(completedTiles <= totalTiles) { "completedTiles must not exceed totalTiles" }
+    }
+
+    val fraction: Float
+        get() = if (totalTiles == 0) 0f else completedTiles.toFloat() / totalTiles.toFloat()
+}
+
 data class UpscaleOutput(
     val width: Int,
     val height: Int,
@@ -62,6 +76,8 @@ interface UpscaleEngine : AutoCloseable {
     fun load(request: ModelLoadRequest): ModelLoadResult
 
     fun isLoaded(): Boolean
+
+    fun progress(): UpscaleProgress
 
     fun upscale(
         input: UpscaleInput,

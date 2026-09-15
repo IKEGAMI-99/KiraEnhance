@@ -121,14 +121,14 @@ class NcnnInferenceTest {
     }
 
     @Test
-    fun oversizedSmokeOutputIsRejectedBeforeNativeInference() {
+    fun unrepresentableOutputDimensionsAreRejectedBeforeNativeInference() {
         val native = FakeNcnnNativeApi()
         val engine = NcnnUpscaleEngine(native)
-        engine.load(validRequest())
+        engine.load(validRequest(nativeScale = Int.MAX_VALUE))
 
         val result = engine.upscale(
-            input = rgbaInput(width = 1_025, height = 1_025),
-            settings = UpscaleSettings(outputScale = 4),
+            input = rgbaInput(width = 2, height = 2),
+            settings = UpscaleSettings(outputScale = Int.MAX_VALUE),
         )
 
         assertTrue(result is UpscaleResult.Failed)
@@ -165,7 +165,7 @@ class NcnnInferenceTest {
         )
     }
 
-    private fun validRequest(): ModelLoadRequest {
+    private fun validRequest(nativeScale: Int = 4): ModelLoadRequest {
         val directory = temporaryFolder.newFolder("model-${System.nanoTime()}")
         val param = File(directory, "model.param").apply { writeText("param") }
         val bin = File(directory, "model.bin").apply { writeBytes(byteArrayOf(1)) }
@@ -177,7 +177,7 @@ class NcnnInferenceTest {
                 ModelArtifactFile(bin.name, bin.absolutePath),
             ),
             capabilities = EngineCapabilities(
-                nativeScale = 4,
+                nativeScale = nativeScale,
                 pixelFormat = PixelFormat.RGBA_8888,
                 inputBlobName = "data",
                 outputBlobName = "output",

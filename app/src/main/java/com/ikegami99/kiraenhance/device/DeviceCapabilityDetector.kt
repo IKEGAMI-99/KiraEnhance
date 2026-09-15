@@ -20,7 +20,7 @@ class DeviceCapabilityDetector(
 
         val packageManager = context.packageManager
         val vulkanFeatureVersion = packageManager.systemAvailableFeatures
-            ?.firstOrNull { it.name == PackageManager.FEATURE_VULKAN_HARDWARE_VERSION }
+            .firstOrNull { it.name == PackageManager.FEATURE_VULKAN_HARDWARE_VERSION }
             ?.version
             ?: 0
         val hasVulkan12 = packageManager.hasSystemFeature(

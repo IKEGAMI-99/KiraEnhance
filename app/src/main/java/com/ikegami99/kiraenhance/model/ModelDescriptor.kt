@@ -53,6 +53,9 @@ data class ModelDescriptor(
 ) {
     val totalFileSizeBytes: Long
         get() = artifacts.sumOf(ModelArtifactDescriptor::fileSizeBytes)
+
+    val fileSizeBytes: Long
+        get() = totalFileSizeBytes
 }
 
 data class ModelManifest(

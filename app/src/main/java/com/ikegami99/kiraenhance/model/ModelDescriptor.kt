@@ -28,15 +28,20 @@ data class ModelControlDescriptor(
     val choices: List<String> = emptyList(),
 )
 
+data class ModelArtifactDescriptor(
+    val fileName: String,
+    val downloadUrl: String,
+    val fileSizeBytes: Long,
+    val sha256: String,
+)
+
 data class ModelDescriptor(
     val id: String,
     val displayName: String,
     val mode: EnhancementMode,
     val version: String,
     val backend: ModelBackend,
-    val downloadUrl: String,
-    val fileSizeBytes: Long,
-    val sha256: String,
+    val artifacts: List<ModelArtifactDescriptor>,
     val supportedScales: List<Int>,
     val minAppVersion: String,
     val estimatedRamMb: Long,
@@ -45,7 +50,10 @@ data class ModelDescriptor(
     val description: String,
     val community: Boolean = false,
     val controls: List<ModelControlDescriptor> = emptyList(),
-)
+) {
+    val totalFileSizeBytes: Long
+        get() = artifacts.sumOf(ModelArtifactDescriptor::fileSizeBytes)
+}
 
 data class ModelManifest(
     val schemaVersion: Int,

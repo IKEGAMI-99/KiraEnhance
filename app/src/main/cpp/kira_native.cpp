@@ -202,6 +202,7 @@ Java_com_ikegami99_kiraenhance_inference_ncnn_NcnnNativeBridge_nativeLoadModel(
 #endif
 
     if (context->net.load_param(param_path.c_str()) != 0) {
+        context.reset();
         if (gpu_enabled) {
             release_gpu();
         }
@@ -209,6 +210,7 @@ Java_com_ikegami99_kiraenhance_inference_ncnn_NcnnNativeBridge_nativeLoadModel(
     }
 
     if (context->net.load_model(bin_path.c_str()) != 0) {
+        context.reset();
         if (gpu_enabled) {
             release_gpu();
         }

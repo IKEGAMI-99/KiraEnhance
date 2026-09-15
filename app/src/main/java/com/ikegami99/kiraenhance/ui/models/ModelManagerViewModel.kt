@@ -34,7 +34,7 @@ data class ModelCardUiState(
     val installed: Boolean,
     val downloadState: ModelDownloadState = ModelDownloadState.IDLE,
     val bytesDownloaded: Long = 0L,
-    val totalBytes: Long = model.fileSizeBytes,
+    val totalBytes: Long = model.totalFileSizeBytes,
     val warningMessage: String? = null,
     val errorMessage: String? = null,
     val downloadAvailable: Boolean = true,
@@ -93,7 +93,7 @@ class ModelManagerViewModel(
                 installed = if (reinstalling) false else it.installed,
                 downloadState = ModelDownloadState.QUEUED,
                 bytesDownloaded = 0L,
-                totalBytes = card.model.fileSizeBytes,
+                totalBytes = card.model.totalFileSizeBytes,
                 errorMessage = null,
             )
         }
@@ -120,15 +120,7 @@ class ModelManagerViewModel(
     }
 
     private fun removeLocalModelFiles(card: ModelCardUiState): Boolean = runCatching {
-        val versionDir = store.modelFile(card.model.id, card.model.version).parentFile
-        if (versionDir?.exists() == true && !versionDir.deleteRecursively()) {
-            error("モデル本体を削除できませんでした")
-        }
-
-        val partial = store.partialFile(card.model.id, card.model.version)
-        if (partial.exists() && !partial.delete()) {
-            error("一時ダウンロードファイルを削除できませんでした")
-        }
+        check(store.deleteModel(card.model)) { "モデルファイルを削除できませんでした" }
     }.fold(
         onSuccess = { true },
         onFailure = { error ->
@@ -153,9 +145,11 @@ class ModelManagerViewModel(
             cards = models.map { model ->
                 ModelCardUiState(
                     model = model,
-                    installed = store.isInstalled(model.id, model.version),
+                    installed = store.isInstalled(model),
                     warningMessage = warning,
-                    downloadAvailable = hasProductionDownloadUrl(model.downloadUrl),
+                    downloadAvailable = model.artifacts.all { artifact ->
+                        hasProductionDownloadUrl(artifact.downloadUrl)
+                    },
                 )
             },
         )
@@ -167,9 +161,9 @@ class ModelManagerViewModel(
             if (info == null) return@Observer
 
             val downloaded = info.progress.getLong(ModelDownloadWorker.KEY_BYTES_DOWNLOADED, 0L)
-            val total = info.progress.getLong(ModelDownloadWorker.KEY_TOTAL_BYTES, model.fileSizeBytes)
+            val total = info.progress.getLong(ModelDownloadWorker.KEY_TOTAL_BYTES, model.totalFileSizeBytes)
                 .takeIf { it > 0L }
-                ?: model.fileSizeBytes
+                ?: model.totalFileSizeBytes
 
             when (info.state) {
                 WorkInfo.State.ENQUEUED,
@@ -194,10 +188,10 @@ class ModelManagerViewModel(
                 WorkInfo.State.SUCCEEDED -> {
                     updateCard(model.id) {
                         it.copy(
-                            installed = store.isInstalled(model.id, model.version),
+                            installed = store.isInstalled(model),
                             downloadState = ModelDownloadState.SUCCEEDED,
-                            bytesDownloaded = model.fileSizeBytes,
-                            totalBytes = model.fileSizeBytes,
+                            bytesDownloaded = model.totalFileSizeBytes,
+                            totalBytes = model.totalFileSizeBytes,
                             errorMessage = null,
                         )
                     }
@@ -207,7 +201,7 @@ class ModelManagerViewModel(
                 WorkInfo.State.FAILED -> {
                     updateCard(model.id) {
                         it.copy(
-                            installed = store.isInstalled(model.id, model.version),
+                            installed = store.isInstalled(model),
                             downloadState = ModelDownloadState.FAILED,
                             errorMessage = info.outputData.getString(ModelDownloadWorker.KEY_ERROR)
                                 ?: "モデルのダウンロードに失敗しました",
@@ -219,7 +213,7 @@ class ModelManagerViewModel(
                 WorkInfo.State.CANCELLED -> {
                     updateCard(model.id) {
                         it.copy(
-                            installed = store.isInstalled(model.id, model.version),
+                            installed = store.isInstalled(model),
                             downloadState = ModelDownloadState.IDLE,
                             bytesDownloaded = 0L,
                         )

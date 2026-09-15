@@ -25,6 +25,6 @@ class InstalledModelStore(
     }
 
     private companion object {
-        val SAFE_SEGMENT = Regex("^[A-Za-z0-9._-]+$")
+        val SAFE_SEGMENT = Regex("^[A-Za-z0-9][A-Za-z0-9._-]*$")
     }
 }

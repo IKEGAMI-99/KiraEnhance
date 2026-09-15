@@ -11,12 +11,14 @@ import com.ikegami99.kiraenhance.inference.UpscaleOutput
 import com.ikegami99.kiraenhance.inference.UpscaleResult
 import com.ikegami99.kiraenhance.inference.UpscaleSettings
 import com.ikegami99.kiraenhance.inference.tile.AdaptiveTileSizer
+import com.ikegami99.kiraenhance.inference.tile.AutoTileSizer
 import com.ikegami99.kiraenhance.inference.tile.IntRect
 import com.ikegami99.kiraenhance.inference.tile.TilePlanner
 import java.nio.ByteBuffer
 
 class NcnnUpscaleEngine(
     private val nativeApi: NcnnNativeApi = NcnnNativeBridge,
+    private val totalRamMbProvider: () -> Long? = { null },
 ) : UpscaleEngine {
     private val stateLock = Any()
     private var nativeHandle: Long = 0L
@@ -160,7 +162,10 @@ class NcnnUpscaleEngine(
                 )
             }
 
-            val initialTileSize = settings.tileSize ?: DEFAULT_AUTO_TILE_SIZE
+            val initialTileSize = settings.tileSize ?: AutoTileSizer.initial(
+                totalRamMb = totalRamMbProvider(),
+                hasUsableGpu = gpuEnabled,
+            )
             if (
                 settings.tileSize != null ||
                 input.width > initialTileSize ||
@@ -172,6 +177,7 @@ class NcnnUpscaleEngine(
                     request = request,
                     input = input,
                     settings = settings,
+                    initialTileSize = initialTileSize,
                     outputWidth = outputWidthLong.toInt(),
                     outputHeight = outputHeightLong.toInt(),
                     outputRowStride = outputRowStrideLong.toInt(),
@@ -284,6 +290,7 @@ class NcnnUpscaleEngine(
         request: ModelLoadRequest,
         input: UpscaleInput,
         settings: UpscaleSettings,
+        initialTileSize: Int,
         outputWidth: Int,
         outputHeight: Int,
         outputRowStride: Int,
@@ -294,7 +301,7 @@ class NcnnUpscaleEngine(
         }
         val output = allocateDirectOrNull(outputBytes)
             ?: return UpscaleResult.Failed(outOfMemoryError("Unable to allocate tiled output pixel buffer"))
-        var tileSize = settings.tileSize ?: DEFAULT_AUTO_TILE_SIZE
+        var tileSize = initialTileSize
 
         while (true) {
             if (isCancellationRequested()) {
@@ -574,7 +581,6 @@ class NcnnUpscaleEngine(
 
     private companion object {
         const val BYTES_PER_RGBA_PIXEL = 4L
-        const val DEFAULT_AUTO_TILE_SIZE = 128
         const val MAX_SMOKE_OUTPUT_BYTES = 64L * 1024L * 1024L
     }
 }

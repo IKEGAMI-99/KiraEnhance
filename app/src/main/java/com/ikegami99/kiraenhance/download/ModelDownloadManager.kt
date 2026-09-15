@@ -23,17 +23,22 @@ class ModelDownloadManager(
             .setRequiredNetworkType(networkTypeFor(wifiOnly))
             .build()
 
-        val input = Data.Builder()
+        val inputBuilder = Data.Builder()
             .putString(ModelDownloadWorker.KEY_MODEL_ID, model.id)
             .putString(ModelDownloadWorker.KEY_VERSION, model.version)
-            .putString(ModelDownloadWorker.KEY_URL, model.downloadUrl)
-            .putString(ModelDownloadWorker.KEY_SHA256, model.sha256)
-            .putLong(ModelDownloadWorker.KEY_FILE_SIZE_BYTES, model.fileSizeBytes)
-            .build()
+            .putInt(ModelDownloadWorker.KEY_ARTIFACT_COUNT, model.artifacts.size)
+
+        model.artifacts.forEachIndexed { index, artifact ->
+            inputBuilder
+                .putString(ModelDownloadWorker.artifactFileNameKey(index), artifact.fileName)
+                .putString(ModelDownloadWorker.artifactUrlKey(index), artifact.downloadUrl)
+                .putString(ModelDownloadWorker.artifactSha256Key(index), artifact.sha256)
+                .putLong(ModelDownloadWorker.artifactSizeKey(index), artifact.fileSizeBytes)
+        }
 
         val request = OneTimeWorkRequest.Builder(ModelDownloadWorker::class.java)
             .setConstraints(constraints)
-            .setInputData(input)
+            .setInputData(inputBuilder.build())
             .addTag("model-download")
             .addTag("model-download-${model.id}")
             .build()

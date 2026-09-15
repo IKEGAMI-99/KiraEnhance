@@ -34,5 +34,5 @@ jobs:
         with:
           gradle-version: '9.6.0'
 
-      - name: Build and unit test
-        run: gradle :app:assembleDebug :app:testDebugUnitTest --stacktrace
+      - name: Build and test compile
+        run: gradle :app:assembleDebug :app:testDebugUnitTest :app:assembleDebugAndroidTest --stacktrace

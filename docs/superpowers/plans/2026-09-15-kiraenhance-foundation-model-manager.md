@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build a launchable Android KiraEnhance app shell with the final beginner-first visual direction, a typed model registry, device capability detection, verified/resumable model downloads, and a functional model-management screen, without adding AI inference yet.
+**Goal:** Build a launchable Android KiraEnhance app shell with the beginner-first visual direction, a typed model registry, device capability detection, verified/resumable model downloads, and a functional model-management screen, without adding AI inference yet.
 
-**Architecture:** Use a single Android app module with Kotlin/Jetpack Compose for UI and domain logic. Model metadata is parsed into immutable descriptors, persisted model state lives under app-private storage, and WorkManager performs resumable downloads into `.part` files before SHA-256 verification and atomic activation. Keep inference behind interfaces that are introduced later; this milestone must not bake MNN or ncnn assumptions into UI code.
+**Architecture:** Use a single Android app module with Kotlin/Jetpack Compose for UI and domain logic. Model metadata is parsed into immutable descriptors, persisted model state lives under app-private storage, and WorkManager performs resumable downloads into `.part` files before SHA-256 verification and atomic activation. Keep inference behind interfaces introduced by later plans; this milestone must not bake MNN or ncnn assumptions into UI code.
 
 **Tech Stack:** Android, Kotlin, Jetpack Compose, Material 3, WorkManager, Moshi, Android NDK-ready Gradle configuration, JUnit, Compose UI tests.
 
@@ -20,15 +20,11 @@
 - Reference device class: POCO F7 Ultra / Snapdragon 8 Elite.
 - AI inference must remain fully local; network access is only for app/model metadata and downloads.
 - App distribution target is GitHub Releases; model metadata lives in GitHub and large model binaries on Hugging Face.
-- Use stable toolchain versions current on 2026-09-15: AGP `9.4.0`, Gradle `9.6.0`, compileSdk `37`, targetSdk `36`, minSdk `28`, NDK `28.2.13676358`, Compose BOM `2026.08.00`, WorkManager `2.11.2`, JDK `17`.
+- Toolchain: AGP `9.4.0`, Gradle `9.6.0`, compileSdk `37`, targetSdk `36`, minSdk `28`, NDK `28.2.13676358`, Compose BOM `2026.08.00`, WorkManager `2.11.2`, JDK `17`.
 - Initial app version: `0.1.0-alpha01`, versionCode `1`.
 - Do not bundle AI model binaries in the APK.
-- No image data or full source file paths may be uploaded or included in diagnostic logs.
-- UI labels for primary modes are `忠実`, `おすすめ`, `高精細`, `UltraSharp`.
 
----
-
-## File map for this milestone
+## File Structure
 
 ```text
 KiraEnhance/
@@ -36,192 +32,89 @@ KiraEnhance/
 ├── build.gradle.kts
 ├── gradle.properties
 ├── gradle/wrapper/gradle-wrapper.properties
-├── .gitignore
-├── .github/workflows/android.yml
-└── app/
-    ├── build.gradle.kts
-    ├── proguard-rules.pro
-    └── src/
-        ├── main/
-        │   ├── AndroidManifest.xml
-        │   ├── assets/model_manifest.json
-        │   ├── java/com/ikegami99/kiraenhance/
-        │   │   ├── MainActivity.kt
-        │   │   ├── KiraEnhanceApp.kt
-        │   │   ├── data/model/ModelManifestParser.kt
-        │   │   ├── data/model/ModelRepository.kt
-        │   │   ├── data/model/ModelStorage.kt
-        │   │   ├── data/model/ModelDownloadWorker.kt
-        │   │   ├── data/model/Sha256Verifier.kt
-        │   │   ├── domain/model/EnhanceMode.kt
-        │   │   ├── domain/model/ModelDescriptor.kt
-        │   │   ├── domain/model/ModelInstallState.kt
-        │   │   ├── domain/device/DeviceCapabilityDetector.kt
-        │   │   ├── domain/device/DeviceSupportEvaluator.kt
-        │   │   ├── ui/home/HomeScreen.kt
-        │   │   ├── ui/home/HomeViewModel.kt
-        │   │   ├── ui/models/ModelManagerScreen.kt
-        │   │   ├── ui/models/ModelManagerViewModel.kt
-        │   │   ├── ui/theme/Color.kt
-        │   │   ├── ui/theme/Theme.kt
-        │   │   └── ui/theme/Type.kt
-        │   └── res/values/strings.xml
-        ├── test/java/com/ikegami99/kiraenhance/
-        │   ├── data/model/ModelManifestParserTest.kt
-        │   ├── data/model/Sha256VerifierTest.kt
-        │   ├── data/model/ModelStorageTest.kt
-        │   └── domain/device/DeviceSupportEvaluatorTest.kt
-        └── androidTest/java/com/ikegami99/kiraenhance/
-            └── ui/ModelManagerScreenTest.kt
+├── app/
+│   ├── build.gradle.kts
+│   └── src/
+│       ├── main/
+│       │   ├── AndroidManifest.xml
+│       │   ├── java/com/ikegami99/kiraenhance/
+│       │   │   ├── MainActivity.kt
+│       │   │   ├── KiraEnhanceApp.kt
+│       │   │   ├── ui/theme/KiraTheme.kt
+│       │   │   ├── ui/home/HomeScreen.kt
+│       │   │   ├── ui/models/ModelManagerScreen.kt
+│       │   │   ├── ui/models/ModelManagerViewModel.kt
+│       │   │   ├── model/ModelDescriptor.kt
+│       │   │   ├── model/ModelManifestParser.kt
+│       │   │   ├── model/InstalledModelStore.kt
+│       │   │   ├── device/DeviceCapabilities.kt
+│       │   │   ├── device/DeviceCapabilityDetector.kt
+│       │   │   ├── download/ModelDownloadManager.kt
+│       │   │   ├── download/ModelDownloadWorker.kt
+│       │   │   └── util/Sha256.kt
+│       │   └── res/values/strings.xml
+│       ├── test/java/com/ikegami99/kiraenhance/
+│       │   ├── model/ModelManifestParserTest.kt
+│       │   ├── device/DeviceCapabilityDetectorTest.kt
+│       │   ├── download/ModelDownloadManagerTest.kt
+│       │   └── util/Sha256Test.kt
+│       └── androidTest/java/com/ikegami99/kiraenhance/
+│           └── ui/models/ModelManagerScreenTest.kt
+└── model-manifest.example.json
 ```
 
 ---
 
-### Task 1: Bootstrap the Android project and CI
+### Task 1: Android project scaffold and beginner-first shell
 
 **Files:**
 - Create: `settings.gradle.kts`
 - Create: `build.gradle.kts`
 - Create: `gradle.properties`
 - Create: `gradle/wrapper/gradle-wrapper.properties`
-- Create: `.gitignore`
 - Create: `app/build.gradle.kts`
-- Create: `app/proguard-rules.pro`
 - Create: `app/src/main/AndroidManifest.xml`
-- Create: `app/src/main/res/values/strings.xml`
 - Create: `app/src/main/java/com/ikegami99/kiraenhance/MainActivity.kt`
 - Create: `app/src/main/java/com/ikegami99/kiraenhance/KiraEnhanceApp.kt`
-- Create: `.github/workflows/android.yml`
+- Create: `app/src/main/java/com/ikegami99/kiraenhance/ui/theme/KiraTheme.kt`
+- Create: `app/src/main/java/com/ikegami99/kiraenhance/ui/home/HomeScreen.kt`
+- Create: `app/src/main/res/values/strings.xml`
 
 **Interfaces:**
-- Produces a buildable `:app` module and `KiraEnhanceApp()` Compose entry point used by later tasks.
+- Produces: `KiraEnhanceApp()` root composable and navigation route `models` reserved for Task 5.
 
-- [ ] **Step 1: Create a minimal build configuration**
+- [ ] **Step 1: Create the Gradle project using the exact toolchain in Global Constraints.**
 
-Use AGP 9.4.0 and Gradle 9.6.0. `settings.gradle.kts`:
-
-```kotlin
-pluginManagement {
-    repositories {
-        google()
-        mavenCentral()
-        gradlePluginPortal()
-    }
-}
-dependencyResolutionManagement {
-    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
-    repositories {
-        google()
-        mavenCentral()
-    }
-}
-rootProject.name = "KiraEnhance"
-include(":app")
-```
-
-Root `build.gradle.kts`:
+Root plugin configuration:
 
 ```kotlin
 plugins {
     id("com.android.application") version "9.4.0" apply false
+    id("org.jetbrains.kotlin.android") version "2.2.20" apply false
+    id("org.jetbrains.kotlin.plugin.compose") version "2.2.20" apply false
+    id("com.google.devtools.ksp") version "2.2.20-2.0.3" apply false
 }
 ```
 
-`gradle/wrapper/gradle-wrapper.properties`:
+Set Gradle distribution to `gradle-9.6.0-bin.zip` and JDK target to 17.
 
-```properties
-distributionBase=GRADLE_USER_HOME
-distributionPath=wrapper/dists
-distributionUrl=https\://services.gradle.org/distributions/gradle-9.6.0-bin.zip
-networkTimeout=10000
-validateDistributionUrl=true
-zipStoreBase=GRADLE_USER_HOME
-zipStorePath=wrapper/dists
-```
+- [ ] **Step 2: Configure the app module.**
 
-- [ ] **Step 2: Configure the app module**
+Use namespace/package `com.ikegami99.kiraenhance`, `compileSdk = 37`, `targetSdk = 36`, `minSdk = 28`, version `0.1.0-alpha01`, versionCode `1`, and `ndkVersion = "28.2.13676358"`. Enable Compose and add Material 3, lifecycle-runtime-compose, activity-compose, navigation-compose, WorkManager `2.11.2`, Moshi, OkHttp, JUnit, and Compose UI test dependencies.
 
-`app/build.gradle.kts` must include:
+- [ ] **Step 3: Create the theme.**
 
-```kotlin
-plugins {
-    id("com.android.application")
-}
+Define a dark-first Material 3 scheme with soft plum/lavender/pink accents, rounded surfaces, and no copyrighted game assets. Support system/light/dark via `KiraEnhanceTheme(darkTheme: Boolean = isSystemInDarkTheme(), content: @Composable () -> Unit)`.
 
-android {
-    namespace = "com.ikegami99.kiraenhance"
-    compileSdk = 37
-    ndkVersion = "28.2.13676358"
+- [ ] **Step 4: Create HomeScreen.**
 
-    defaultConfig {
-        applicationId = "com.ikegami99.kiraenhance"
-        minSdk = 28
-        targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0-alpha01"
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-    }
+The screen must show the app name, a large `画像を選ぶ` primary button, four mode preview cards (`忠実`, `おすすめ`, `高精細`, `UltraSharp`), and a `モデル管理` action. In this milestone the image button may show a disabled/informational state because inference is not implemented.
 
-    buildFeatures {
-        compose = true
-        buildConfig = true
-    }
+- [ ] **Step 5: Add root navigation.**
 
-    compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
-    }
-}
+`KiraEnhanceApp()` uses a `NavHost` with `home` as start destination and a placeholder `models` destination so Task 5 can replace the placeholder without changing HomeScreen's callback shape.
 
-dependencies {
-    val composeBom = platform("androidx.compose:compose-bom:2026.08.00")
-    implementation(composeBom)
-    androidTestImplementation(composeBom)
-
-    implementation("androidx.activity:activity-compose:1.13.0")
-    implementation("androidx.compose.foundation:foundation")
-    implementation("androidx.compose.material3:material3")
-    implementation("androidx.compose.ui:ui")
-    implementation("androidx.compose.ui:ui-tooling-preview")
-    debugImplementation("androidx.compose.ui:ui-tooling")
-
-    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.11.0")
-    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.11.0")
-    implementation("androidx.work:work-runtime:2.11.2")
-    implementation("com.squareup.moshi:moshi:1.15.2")
-    implementation("com.squareup.moshi:moshi-kotlin:1.15.2")
-
-    testImplementation("junit:junit:4.13.2")
-    androidTestImplementation("androidx.test.ext:junit:1.3.0")
-    androidTestImplementation("androidx.compose.ui:ui-test-junit4")
-    debugImplementation("androidx.compose.ui:ui-test-manifest")
-}
-```
-
-If a listed AndroidX stable version has moved between planning and execution, keep the exact version above for reproducibility unless Gradle proves it is unavailable.
-
-- [ ] **Step 3: Add the minimal launcher**
-
-`MainActivity.kt`:
-
-```kotlin
-package com.ikegami99.kiraenhance
-
-import android.os.Bundle
-import androidx.activity.ComponentActivity
-import androidx.activity.compose.setContent
-
-class MainActivity : ComponentActivity() {
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        setContent { KiraEnhanceApp() }
-    }
-}
-```
-
-`KiraEnhanceApp.kt` initially renders `Text("KiraEnhance")` inside `MaterialTheme`.
-
-- [ ] **Step 4: Build the project**
+- [ ] **Step 6: Build and run unit-test task.**
 
 Run:
 
@@ -229,484 +122,257 @@ Run:
 ./gradlew :app:assembleDebug :app:testDebugUnitTest
 ```
 
-Expected: both tasks complete with `BUILD SUCCESSFUL`.
+Expected: build succeeds and unit-test task completes with no failures.
 
-- [ ] **Step 5: Add CI**
-
-`.github/workflows/android.yml` checks out the repository, sets up JDK 17, runs `./gradlew :app:testDebugUnitTest :app:assembleDebug`, and uploads `app-debug.apk` as an artifact.
-
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit.**
 
 ```bash
 git add .
-git commit -m "build: bootstrap KiraEnhance Android app"
+git commit -m "feat: scaffold KiraEnhance Android app"
 ```
 
 ---
 
-### Task 2: Define model metadata and parse the manifest
+### Task 2: Typed model manifest and local installed-state store
 
 **Files:**
-- Create: `app/src/main/java/com/ikegami99/kiraenhance/domain/model/EnhanceMode.kt`
-- Create: `app/src/main/java/com/ikegami99/kiraenhance/domain/model/ModelDescriptor.kt`
-- Create: `app/src/main/java/com/ikegami99/kiraenhance/domain/model/ModelInstallState.kt`
-- Create: `app/src/main/java/com/ikegami99/kiraenhance/data/model/ModelManifestParser.kt`
-- Create: `app/src/main/assets/model_manifest.json`
-- Test: `app/src/test/java/com/ikegami99/kiraenhance/data/model/ModelManifestParserTest.kt`
+- Create: `app/src/main/java/com/ikegami99/kiraenhance/model/ModelDescriptor.kt`
+- Create: `app/src/main/java/com/ikegami99/kiraenhance/model/ModelManifestParser.kt`
+- Create: `app/src/main/java/com/ikegami99/kiraenhance/model/InstalledModelStore.kt`
+- Create: `app/src/test/java/com/ikegami99/kiraenhance/model/ModelManifestParserTest.kt`
+- Create: `model-manifest.example.json`
 
 **Interfaces:**
-- Produces `EnhanceMode`, `ModelDescriptor`, `ModelParameterDescriptor`, `ModelManifestParser.parse(json: String): List<ModelDescriptor>`.
-- Later tasks consume `ModelDescriptor.id`, `download`, `sha256`, `backend`, and capability fields.
+- Produces: `ModelDescriptor`, `ModelControlDescriptor`, `ModelManifest`, `ModelManifestParser.parse(json: String): ModelManifest`.
+- Produces: `InstalledModelStore.modelsDir()` and `InstalledModelStore.modelFile(modelId: String, version: String): File`.
 
-- [ ] **Step 1: Write the failing parser test**
+- [ ] **Step 1: Write parser tests first.**
 
-```kotlin
-@Test
-fun parsesUltraSharpAsCommunityModel() {
-    val models = ModelManifestParser().parse(sampleManifest)
-    val ultra = models.single { it.id == "ultrasharp-4x" }
-    assertEquals(EnhanceMode.ULTRASHARP, ultra.mode)
-    assertTrue(ultra.communityModel)
-    assertEquals(listOf(2, 4), ultra.outputScales)
-}
-```
+Test a manifest containing all four user-facing modes, including `community = true` for UltraSharp, multiple supported scales, license metadata, SHA-256, and a PiSA-specific control. Assert invalid backend names and malformed SHA-256 values are rejected.
 
-Also assert that `pisa-sr` maps to `EnhanceMode.BALANCED` and exposes `fidelity` and `semanticDetail` controls.
-
-- [ ] **Step 2: Run the test and verify failure**
+- [ ] **Step 2: Run tests and verify failure.**
 
 ```bash
-./gradlew :app:testDebugUnitTest --tests '*ModelManifestParserTest*'
+./gradlew :app:testDebugUnitTest --tests "*ModelManifestParserTest"
 ```
 
-Expected: compilation failure because the model types/parser do not exist.
+Expected: fail because parser/types do not exist.
 
-- [ ] **Step 3: Add typed domain models**
+- [ ] **Step 3: Implement immutable descriptor types.**
+
+Use enums:
 
 ```kotlin
-enum class EnhanceMode { FIDELITY, BALANCED, DETAIL, ULTRASHARP }
 enum class ModelBackend { MNN, NCNN }
-enum class ParameterKind { FLOAT, BOOLEAN, CHOICE }
-
-data class ModelParameterDescriptor(
-    val id: String,
-    val label: String,
-    val kind: ParameterKind,
-    val defaultValue: String,
-    val min: Float? = null,
-    val max: Float? = null,
-    val step: Float? = null,
-    val choices: List<String> = emptyList(),
-)
-
-data class ModelDescriptor(
-    val id: String,
-    val displayName: String,
-    val mode: EnhanceMode,
-    val version: String,
-    val backend: ModelBackend,
-    val downloadUrl: String?,
-    val fileSizeBytes: Long,
-    val sha256: String?,
-    val outputScales: List<Int>,
-    val estimatedRamMb: Int,
-    val minEngineVersion: String,
-    val licenseName: String,
-    val licenseUrl: String?,
-    val attribution: String?,
-    val communityModel: Boolean,
-    val redistributionAllowed: Boolean,
-    val description: String,
-    val parameters: List<ModelParameterDescriptor>,
-)
+enum class EnhancementMode { FIDELITY, BALANCED, DETAIL, ULTRASHARP }
+enum class ControlType { SLIDER, TOGGLE, CHOICE }
 ```
 
-`ModelInstallState` must be a sealed interface with `NotInstalled`, `Downloading(progress: Float, bytesDownloaded: Long, totalBytes: Long)`, `Installed(version: String, path: String)`, `Corrupt(reason: String)`, and `UpdateAvailable(installedVersion: String, availableVersion: String)`.
+`ModelDescriptor` must include: `id`, `displayName`, `mode`, `version`, `backend`, `downloadUrl`, `fileSizeBytes`, `sha256`, `supportedScales`, `minAppVersion`, `estimatedRamMb`, `licenseName`, `licenseUrl`, `description`, `community`, and `controls`.
 
-- [ ] **Step 4: Implement strict manifest parsing**
+- [ ] **Step 4: Implement parser validation.**
 
-Use Moshi and reject entries with blank ids, unsupported scale factors, missing SHA-256 for redistributable downloads, or download URLs that are not HTTPS. A user-supplied-only model is represented by `downloadUrl = null` and `redistributionAllowed = false`.
+Reject duplicate model ids, empty URLs, non-positive sizes, unsupported scale values outside `{2,4}`, SHA strings not matching 64 lowercase/uppercase hex characters, and slider controls where `min > default > max` is violated.
 
-- [ ] **Step 5: Add the bundled bootstrap manifest**
+- [ ] **Step 5: Implement InstalledModelStore.**
 
-`model_manifest.json` contains four entries:
+Store activated model files below `filesDir/models/<modelId>/<version>/model.bin`. Partial downloads use `cacheDir/model-downloads/<modelId>-<version>.part`. Provide methods only for path ownership and installed checks; download/network logic belongs to Task 4.
 
-- `realesrgan-anime-6b`: Fidelity, NCNN, downloadable metadata placeholder disabled until a verified production URL/hash is entered.
-- `pisa-sr`: Balanced, MNN, required product model, fidelity + semantic detail controls.
-- `hat-detail`: Detail, MNN, candidate metadata.
-- `ultrasharp-4x`: UltraSharp, NCNN, community model, and `redistributionAllowed=false` until license/redistribution verification is complete.
+- [ ] **Step 6: Add `model-manifest.example.json`.**
 
-Do not invent real hashes or URLs. For unavailable downloadable binaries, use `downloadUrl=null`, `sha256=null`, and `redistributionAllowed=false`; the UI will show `配布準備中` or user-supplied-only rather than a broken download button.
+Include placeholder example URLs and zero-distribution notes only, not actual model binaries. The four entries are RealESRGAN Anime candidate, PiSA-SR required target, HAT-S candidate, and UltraSharp community model.
 
-- [ ] **Step 6: Run parser tests**
+- [ ] **Step 7: Run tests.**
 
 ```bash
-./gradlew :app:testDebugUnitTest --tests '*ModelManifestParserTest*'
+./gradlew :app:testDebugUnitTest --tests "*ModelManifestParserTest"
 ```
 
-Expected: PASS.
+Expected: pass.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit.**
 
 ```bash
-git add app/src/main/assets app/src/main/java/com/ikegami99/kiraenhance/domain/model app/src/main/java/com/ikegami99/kiraenhance/data/model app/src/test
- git commit -m "feat: add typed AI model manifest"
+git add app/src/main/java/com/ikegami99/kiraenhance/model app/src/test/java/com/ikegami99/kiraenhance/model model-manifest.example.json
+git commit -m "feat: add typed model manifest"
 ```
 
 ---
 
-### Task 3: Add verified local model storage
+### Task 3: Device capability detection
 
 **Files:**
-- Create: `app/src/main/java/com/ikegami99/kiraenhance/data/model/Sha256Verifier.kt`
-- Create: `app/src/main/java/com/ikegami99/kiraenhance/data/model/ModelStorage.kt`
-- Test: `app/src/test/java/com/ikegami99/kiraenhance/data/model/Sha256VerifierTest.kt`
-- Test: `app/src/test/java/com/ikegami99/kiraenhance/data/model/ModelStorageTest.kt`
+- Create: `app/src/main/java/com/ikegami99/kiraenhance/device/DeviceCapabilities.kt`
+- Create: `app/src/main/java/com/ikegami99/kiraenhance/device/DeviceCapabilityDetector.kt`
+- Create: `app/src/test/java/com/ikegami99/kiraenhance/device/DeviceCapabilityDetectorTest.kt`
 
 **Interfaces:**
-- Produces `Sha256Verifier.sha256(file: File): String` and `ModelStorage` methods `partFile(modelId)`, `activeFile(modelId, version)`, `activateVerifiedPart(...)`, `deleteModel(modelId)`.
+- Produces: `DeviceCapabilities(totalRamMb, availableStorageMb, vulkanVersion, deviceName, androidApi, supportTier)`.
+- Produces: `SupportTier { RECOMMENDED, SUPPORTED, NOT_RECOMMENDED, UNSUPPORTED }`.
 
-- [ ] **Step 1: Write SHA-256 tests**
+- [ ] **Step 1: Write pure classification tests.**
 
-Test the known UTF-8 payload `abc`, whose SHA-256 is `ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad`.
-
-- [ ] **Step 2: Run and confirm failure**
-
-```bash
-./gradlew :app:testDebugUnitTest --tests '*Sha256VerifierTest*'
-```
-
-Expected: class not found/compilation failure.
-
-- [ ] **Step 3: Implement streaming SHA-256**
-
-Read in 1 MiB chunks using `DigestInputStream`; never load model files entirely into memory.
-
-- [ ] **Step 4: Write storage tests**
-
-Use a temporary directory and assert:
-
-1. downloads land in `<root>/<modelId>/download.part`;
-2. successful activation renames into `<root>/<modelId>/<version>/model.bin`;
-3. activation refuses a hash mismatch and leaves the active model untouched;
-4. deleting one model does not delete siblings.
-
-- [ ] **Step 5: Implement `ModelStorage`**
-
-Activation order must be: verify part file -> create version directory -> atomic rename/copy+fsync fallback -> write a small `installed.json` marker -> remove old `.part`. Never write `installed.json` before the final model is in place.
-
-- [ ] **Step 6: Run tests**
-
-```bash
-./gradlew :app:testDebugUnitTest --tests '*Sha256VerifierTest*' --tests '*ModelStorageTest*'
-```
-
-Expected: PASS.
-
-- [ ] **Step 7: Commit**
-
-```bash
-git add app/src/main/java/com/ikegami99/kiraenhance/data/model app/src/test
- git commit -m "feat: add verified model storage"
-```
-
----
-
-### Task 4: Add resumable WorkManager model downloads
-
-**Files:**
-- Create: `app/src/main/java/com/ikegami99/kiraenhance/data/model/ModelDownloadWorker.kt`
-- Create: `app/src/main/java/com/ikegami99/kiraenhance/data/model/ModelRepository.kt`
-- Modify: `app/src/main/AndroidManifest.xml`
-- Test: extend `app/src/test/java/com/ikegami99/kiraenhance/data/model/ModelStorageTest.kt`
-
-**Interfaces:**
-- Produces `ModelRepository.models: StateFlow<List<ModelUiState>>`, `enqueueDownload(modelId)`, `cancelDownload(modelId)`, `deleteModel(modelId)`, `refresh()`.
-- Work input keys: `model_id`, `version`, `url`, `sha256`, `size_bytes`.
-- Work progress keys: `downloaded_bytes`, `total_bytes`.
-
-- [ ] **Step 1: Write a pure range planner test**
-
-Add a small internal function:
+Classification function signature:
 
 ```kotlin
-internal fun rangeHeader(existingBytes: Long): String? =
-    if (existingBytes > 0L) "bytes=$existingBytes-" else null
+fun classifyDevice(totalRamMb: Long, hasVulkan12: Boolean, is64Bit: Boolean): SupportTier
 ```
 
-Test `0 -> null` and `1024 -> "bytes=1024-"`.
+Rules for v1:
+- `UNSUPPORTED` if not 64-bit or Vulkan 1.2 is unavailable.
+- `RECOMMENDED` at `>= 12_000 MB` RAM.
+- `SUPPORTED` at `>= 8_000 MB` RAM.
+- `NOT_RECOMMENDED` below `8_000 MB` RAM.
 
-- [ ] **Step 2: Implement `ModelDownloadWorker`**
-
-Use `HttpURLConnection` with:
-
-- connect/read timeout of 30 seconds;
-- `Range` header when `.part` already has bytes;
-- append only when server replies `206`; if it replies `200`, truncate and restart;
-- update WorkManager progress at most four times per second;
-- verify expected byte count when known;
-- SHA-256 verify before activation;
-- return `Result.retry()` for transient HTTP 408/429/5xx and network I/O failure;
-- return `Result.failure()` for 4xx other than 408/429, hash mismatch, or malformed metadata.
-
-The worker must never delete a previously activated version when a new download fails.
-
-- [ ] **Step 3: Add Wi-Fi-only constraints at repository level**
-
-When the user setting is enabled, build the request with `NetworkType.UNMETERED`; otherwise use `NetworkType.CONNECTED`.
-
-- [ ] **Step 4: Implement repository state projection**
-
-`ModelRepository` combines manifest descriptors, storage markers, and WorkManager `WorkInfo` into UI states. A model with `downloadUrl=null` must never enqueue a worker.
-
-- [ ] **Step 5: Run unit tests and build**
+- [ ] **Step 2: Run test and verify failure.**
 
 ```bash
-./gradlew :app:testDebugUnitTest :app:assembleDebug
+./gradlew :app:testDebugUnitTest --tests "*DeviceCapabilityDetectorTest"
 ```
 
-Expected: PASS and successful APK build.
+- [ ] **Step 3: Implement classification and Android detector.**
 
-- [ ] **Step 6: Commit**
+Read memory from `ActivityManager.MemoryInfo.totalMem`, storage from `StatFs(filesDir)`, device name from `Build.MANUFACTURER` + `Build.MODEL`, API from `Build.VERSION.SDK_INT`, 64-bit from `Build.SUPPORTED_64_BIT_ABIS`, and Vulkan capability from `PackageManager.FEATURE_VULKAN_HARDWARE_VERSION` / system feature version.
+
+- [ ] **Step 4: Run tests.**
 
 ```bash
-git add app/src/main/java/com/ikegami99/kiraenhance/data/model app/src/main/AndroidManifest.xml app/src/test
- git commit -m "feat: add resumable model downloads"
+./gradlew :app:testDebugUnitTest --tests "*DeviceCapabilityDetectorTest"
+```
+
+Expected: pass.
+
+- [ ] **Step 5: Commit.**
+
+```bash
+git add app/src/main/java/com/ikegami99/kiraenhance/device app/src/test/java/com/ikegami99/kiraenhance/device
+git commit -m "feat: detect device capability tier"
 ```
 
 ---
 
-### Task 5: Detect device capabilities and rate model support
+### Task 4: Verified resumable model downloader
 
 **Files:**
-- Create: `app/src/main/java/com/ikegami99/kiraenhance/domain/device/DeviceCapabilityDetector.kt`
-- Create: `app/src/main/java/com/ikegami99/kiraenhance/domain/device/DeviceSupportEvaluator.kt`
-- Test: `app/src/test/java/com/ikegami99/kiraenhance/domain/device/DeviceSupportEvaluatorTest.kt`
+- Create: `app/src/main/java/com/ikegami99/kiraenhance/util/Sha256.kt`
+- Create: `app/src/main/java/com/ikegami99/kiraenhance/download/ModelDownloadManager.kt`
+- Create: `app/src/main/java/com/ikegami99/kiraenhance/download/ModelDownloadWorker.kt`
+- Create: `app/src/test/java/com/ikegami99/kiraenhance/util/Sha256Test.kt`
+- Create: `app/src/test/java/com/ikegami99/kiraenhance/download/ModelDownloadManagerTest.kt`
 
 **Interfaces:**
-- Produces `DeviceCapabilities` and `DeviceSupportEvaluator.evaluate(model, device): SupportLevel` where `SupportLevel` is `RECOMMENDED`, `SUPPORTED`, or `NOT_RECOMMENDED`.
+- Consumes: `ModelDescriptor`, `InstalledModelStore`.
+- Produces: `ModelDownloadManager.enqueue(model: ModelDescriptor, wifiOnly: Boolean): UUID`.
+- Worker progress keys: `bytesDownloaded`, `totalBytes`, `modelId`.
 
-- [ ] **Step 1: Write evaluator tests**
+- [ ] **Step 1: Write SHA-256 tests.**
 
-Cover these exact cases:
+Use the known digest of UTF-8 `abc`: `ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad`. Test both file hashing and constant-time-ish normalized comparison.
 
-```text
-RAM 16 GiB + Vulkan + model estimate 6 GiB => RECOMMENDED
-RAM 8 GiB + Vulkan + model estimate 6 GiB => SUPPORTED
-RAM 6 GiB + Vulkan + model estimate 6 GiB => NOT_RECOMMENDED
-No Vulkan + NCNN/Vulkan model => NOT_RECOMMENDED
-```
+- [ ] **Step 2: Write downloader request tests.**
 
-- [ ] **Step 2: Implement pure support evaluation**
+Verify `wifiOnly = true` produces `NetworkType.UNMETERED`; otherwise `NetworkType.CONNECTED`. Verify unique work name is `model-download-<id>-<version>` with `ExistingWorkPolicy.KEEP`.
 
-Use conservative thresholds:
-
-- `RECOMMENDED` when physical RAM >= `estimatedRamMb * 2` and required runtime features are present;
-- `SUPPORTED` when RAM >= `estimatedRamMb * 1.25`;
-- otherwise `NOT_RECOMMENDED`.
-
-This is guidance only; do not block a model solely because of RAM rating.
-
-- [ ] **Step 3: Implement Android capability collection**
-
-Collect:
-
-- `Build.MANUFACTURER`, `Build.MODEL`, Android SDK;
-- total RAM from `ActivityManager.MemoryInfo.totalMem`;
-- available internal storage from `StatFs`;
-- Vulkan feature presence via `PackageManager.FEATURE_VULKAN_HARDWARE_LEVEL` and hardware version feature.
-
-Do not use fragile `/proc` parsing for SoC identification in this milestone. Record `Build.SOC_MANUFACTURER` and `Build.SOC_MODEL` on API levels where available.
-
-- [ ] **Step 4: Run tests**
+- [ ] **Step 3: Run tests and verify failure.**
 
 ```bash
-./gradlew :app:testDebugUnitTest --tests '*DeviceSupportEvaluatorTest*'
+./gradlew :app:testDebugUnitTest --tests "*Sha256Test" --tests "*ModelDownloadManagerTest"
 ```
 
-Expected: PASS.
+- [ ] **Step 4: Implement Sha256.**
 
-- [ ] **Step 5: Commit**
+Stream with a fixed-size buffer; never load a model file wholly into RAM.
+
+- [ ] **Step 5: Implement WorkManager scheduling.**
+
+Pass only model metadata required by the worker through `Data` (`id`, `version`, `url`, `sha256`, `fileSizeBytes`). Do not serialize complete manifest state into WorkManager.
+
+- [ ] **Step 6: Implement resumable HTTP download.**
+
+If `.part` exists, send `Range: bytes=<size>-`. Accept `206` for resume. If the server ignores Range and returns `200`, truncate/restart safely. Update WorkManager progress no more often than every 250 ms or 1 MiB, whichever comes later, to avoid database churn.
+
+- [ ] **Step 7: Verify and atomically activate.**
+
+After expected length is reached, compute SHA-256. On mismatch delete the part and fail with an actionable reason. On success create the final version directory and move via `Files.move(..., StandardCopyOption.ATOMIC_MOVE)` when supported, falling back to a same-filesystem rename. Never expose a partial file as installed.
+
+- [ ] **Step 8: Run tests.**
 
 ```bash
-git add app/src/main/java/com/ikegami99/kiraenhance/domain/device app/src/test
- git commit -m "feat: add device capability guidance"
+./gradlew :app:testDebugUnitTest --tests "*Sha256Test" --tests "*ModelDownloadManagerTest"
+```
+
+Expected: pass.
+
+- [ ] **Step 9: Commit.**
+
+```bash
+git add app/src/main/java/com/ikegami99/kiraenhance/download app/src/main/java/com/ikegami99/kiraenhance/util app/src/test/java/com/ikegami99/kiraenhance/download app/src/test/java/com/ikegami99/kiraenhance/util
+git commit -m "feat: add verified resumable model downloads"
 ```
 
 ---
 
-### Task 6: Build the cute beginner-first Home and Model Manager UI
+### Task 5: Functional model manager UI
 
 **Files:**
-- Create: `app/src/main/java/com/ikegami99/kiraenhance/ui/theme/Color.kt`
-- Create: `app/src/main/java/com/ikegami99/kiraenhance/ui/theme/Theme.kt`
-- Create: `app/src/main/java/com/ikegami99/kiraenhance/ui/theme/Type.kt`
-- Create: `app/src/main/java/com/ikegami99/kiraenhance/ui/home/HomeScreen.kt`
-- Create: `app/src/main/java/com/ikegami99/kiraenhance/ui/home/HomeViewModel.kt`
 - Create: `app/src/main/java/com/ikegami99/kiraenhance/ui/models/ModelManagerScreen.kt`
 - Create: `app/src/main/java/com/ikegami99/kiraenhance/ui/models/ModelManagerViewModel.kt`
+- Create: `app/src/androidTest/java/com/ikegami99/kiraenhance/ui/models/ModelManagerScreenTest.kt`
 - Modify: `app/src/main/java/com/ikegami99/kiraenhance/KiraEnhanceApp.kt`
-- Test: `app/src/androidTest/java/com/ikegami99/kiraenhance/ui/ModelManagerScreenTest.kt`
 
 **Interfaces:**
-- Home consumes a list of `ModelUiState` and exposes callbacks `onSelectImage`, `onSelectMode`, `onOpenModelManager`.
-- Model manager consumes `ModelUiState` and calls repository actions only through its ViewModel.
+- Consumes: `ModelDescriptor`, `InstalledModelStore`, `DeviceCapabilities`, `ModelDownloadManager`.
+- Produces: a real `models` destination and state model `ModelCardUiState`.
 
-- [ ] **Step 1: Write the Compose UI test first**
+- [ ] **Step 1: Write Compose UI tests.**
 
-Create an instrumentation test that renders `ModelManagerScreen` with four fake entries and asserts that these text nodes exist:
+With fake state, assert all four mode labels render, UltraSharp renders a `Community` badge, an uninstalled model has `ダウンロード`, an installed model has `削除`, and a NOT_RECOMMENDED model shows a warning without hard-blocking its download action.
 
-```text
-忠実
-おすすめ
-高精細
-UltraSharp
-モデル管理
-```
-
-Also assert UltraSharp with `redistributionAllowed=false` shows `ユーザー追加 / 配布確認中` and does not expose an enabled `ダウンロード` button.
-
-- [ ] **Step 2: Run the UI test to confirm failure**
+- [ ] **Step 2: Run instrumented test compile.**
 
 ```bash
-./gradlew :app:connectedDebugAndroidTest
+./gradlew :app:assembleDebug :app:assembleDebugAndroidTest
 ```
 
-Expected: compilation failure because the screen does not exist. If no emulator/device is connected, compile the test with `./gradlew :app:assembleDebug :app:assembleDebugAndroidTest` and run it once a device is available before merging.
+Expected before implementation: compile/test setup fails on missing screen types.
 
-- [ ] **Step 3: Implement the theme**
+- [ ] **Step 3: Implement ModelManagerViewModel.**
 
-Design requirements:
+Expose `StateFlow<ModelManagerUiState>` containing model cards, device tier, Wi-Fi-only preference (default true), and download progress. Keep Android `Context` out of the composable surface; dependencies enter the ViewModel/factory.
 
-- default dark surface is near-black plum, not pure black;
-- primary accent is lavender/pink;
-- rounded cards 20dp;
-- subtle gradient is allowed, but no continuous particle animation;
-- light, dark, and system theme hooks must exist;
-- Material 3 large touch targets.
+- [ ] **Step 4: Implement ModelManagerScreen.**
 
-Do not copy Kirapara UI assets or logos.
+Use polished rounded Material 3 cards with mode title, technical model name as secondary text, description, size, RAM estimate, backend, license summary, installed/update/download state, and progress. Provide buttons for download/update/delete/reinstall where applicable. The community badge and license link must be visually obvious for UltraSharp.
 
-- [ ] **Step 4: Implement Home**
+- [ ] **Step 5: Replace navigation placeholder.**
 
-The initial Home screen contains:
+Wire HomeScreen `モデル管理` to the real screen and back navigation. Do not expose inference actions yet.
 
-1. KiraEnhance wordmark text;
-2. a large `画像を選ぶ` button (callback only in this milestone);
-3. four mode cards, with the Balanced card visually marked `おすすめ`;
-4. a `モデル管理` entry;
-5. a privacy line: `画像処理は端末内で完結します`.
-
-No inference button should pretend to work in this milestone. If image processing is not yet implemented, disable it with a clear `推論エンジン準備中` state rather than faking success.
-
-- [ ] **Step 5: Implement Model Manager**
-
-Each card shows:
-
-- user-facing mode;
-- technical model name in secondary text;
-- version;
-- size;
-- estimated RAM;
-- backend;
-- license;
-- support rating;
-- install/download/update state.
-
-Actions are `ダウンロード`, `キャンセル`, `削除`, or `再試行` only when valid for that state.
-
-- [ ] **Step 6: Run all tests**
+- [ ] **Step 6: Build all milestone targets.**
 
 ```bash
-./gradlew :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest
+./gradlew :app:assembleDebug :app:testDebugUnitTest :app:assembleDebugAndroidTest
 ```
 
-Expected: PASS/build success. Run `connectedDebugAndroidTest` on an attached emulator/device before merging.
+Expected: all compile/build tasks pass.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 7: Manual smoke checklist on the reference device when available.**
+
+Verify launch, dark/light theme, model-manager navigation, device tier, a small test-file download through the same worker path, cancellation/retry state, and deletion. Do not claim POCO F7 Ultra runtime validation unless actually executed on that device.
+
+- [ ] **Step 8: Commit.**
 
 ```bash
-git add app/src
- git commit -m "feat: add KiraEnhance home and model manager UI"
+git add app/src/main/java/com/ikegami99/kiraenhance/ui app/src/androidTest app/src/main/java/com/ikegami99/kiraenhance/KiraEnhanceApp.kt
+git commit -m "feat: add model manager experience"
 ```
 
 ---
-
-### Task 7: Wire the app together and document milestone acceptance
-
-**Files:**
-- Modify: `app/src/main/java/com/ikegami99/kiraenhance/KiraEnhanceApp.kt`
-- Create: `README.md`
-
-**Interfaces:**
-- Produces the milestone-1 runnable app and documents where later inference plans attach.
-
-- [ ] **Step 1: Wire one repository instance into ViewModels**
-
-For this small project stage, construct app dependencies in a simple `AppContainer` owned by the application/Compose root. Do not introduce Hilt yet; there is no need to spend a dependency graph framework on half a dozen objects.
-
-- [ ] **Step 2: Add navigation state**
-
-Use a small sealed route (`Home`, `Models`) or Navigation Compose if already required by the UI implementation. Back from Model Manager must return to Home without recreating downloads.
-
-- [ ] **Step 3: Write README milestone instructions**
-
-Document:
-
-```text
-Requirements: JDK 17, Android SDK 37, NDK 28.2.13676358
-Build: ./gradlew :app:assembleDebug
-Unit tests: ./gradlew :app:testDebugUnitTest
-Device tests: ./gradlew :app:connectedDebugAndroidTest
-APK: app/build/outputs/apk/debug/app-debug.apk
-```
-
-Explain that milestone 1 deliberately contains no inference and that models with unverified distribution terms do not expose hosted download URLs.
-
-- [ ] **Step 4: Perform final verification**
-
-Run:
-
-```bash
-./gradlew clean :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest
-```
-
-Expected: `BUILD SUCCESSFUL` with no test failures.
-
-On the reference Android device, verify manually:
-
-1. app launches;
-2. all four mode cards render;
-3. model manager opens;
-4. a manifest entry with a valid test URL can enter Downloading and be cancelled;
-5. corrupt test data fails SHA-256 and is not marked Installed;
-6. deleting a test model removes only its own directory;
-7. app continues working with networking disabled after the manifest is loaded from bundled assets.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add README.md app/src
- git commit -m "docs: complete foundation milestone"
-```
-
----
-
-## Follow-on plans after this milestone
-
-This specification is intentionally decomposed. After this plan passes review and verification, create separate implementation plans in this order:
-
-1. `ncnn-esrgan-inference`: JNI/NDK engine interface, ncnn/Vulkan, RealESRGAN/UltraSharp-compatible local inference, tiling, 2x/4x output, cancellation.
-2. `comparison-and-export`: image picker, EXIF-safe decode, synchronized split/side-by-side/hold comparison, PNG/JPEG/WebP save/share.
-3. `pisa-mnn-inference`: PiSA-SR mobile conversion, MNN execution, tile/VAE strategy, model-specific fidelity/semantic controls, memory profiling on Snapdragon 8 Elite.
-4. `detail-model-and-release`: final Detail model selection, app updater through GitHub Releases, model update checks, log export, version/about/license surfaces, release signing and acceptance tests.
-
-Each follow-on plan must be written only after the interfaces produced by the previous milestone are present in the repository, so file paths and signatures are based on real code rather than guesses.
 
 ## Plan self-review
 
-- Spec coverage for this milestone: Android shell, beginner UI, model manifest, verified download/removal, device guidance, model version/license display are covered.
-- Explicitly deferred into separate plans: inference, comparison/export, PiSA-SR, app updater, final logging/release hardening.
-- No cloud inference or account system is introduced.
-- UltraSharp redistribution remains disabled until terms are verified; the plan does not fabricate a download URL/hash.
-- The model UI is capability-driven so later PiSA/HAT/ncnn implementations do not require redesigning the screens.
+- Spec coverage for this milestone: Android shell, beginner UI direction, model metadata, model download/verification/removal, device guidance, model manager, UltraSharp community treatment.
+- Intentionally deferred to later plans: JNI/NDK inference implementation, MNN/ncnn model execution, PiSA-SR conversion/integration, image import/save, 2x/4x processing, comparison viewer, foreground inference service, app updater, logs/export.
+- No cloud inference or user account is introduced.
+- Model binaries remain external to the APK.
+- Task interfaces are monotonic: Task 2 model types feed Tasks 4/5; Task 3 capabilities feed Task 5; Task 4 downloader feeds Task 5.

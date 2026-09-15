@@ -1,7 +1,7 @@
 package com.ikegami99.kiraenhance.ui.models
 
-import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
@@ -9,6 +9,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.ikegami99.kiraenhance.device.DeviceCapabilities
 import com.ikegami99.kiraenhance.device.SupportTier
 import com.ikegami99.kiraenhance.model.EnhancementMode
+import com.ikegami99.kiraenhance.model.ModelArtifactDescriptor
 import com.ikegami99.kiraenhance.model.ModelBackend
 import com.ikegami99.kiraenhance.model.ModelDescriptor
 import com.ikegami99.kiraenhance.ui.theme.KiraEnhanceTheme
@@ -84,9 +85,18 @@ class ModelManagerScreenTest {
             } else {
                 ModelBackend.MNN
             },
-            downloadUrl = "https://example.invalid/$id.bin",
-            fileSizeBytes = 64L * 1024L * 1024L,
-            sha256 = "a".repeat(64),
+            artifacts = listOf(
+                ModelArtifactDescriptor(
+                    fileName = if (mode == EnhancementMode.FIDELITY || mode == EnhancementMode.ULTRASHARP) {
+                        "model.bin"
+                    } else {
+                        "model.mnn"
+                    },
+                    downloadUrl = "https://example.invalid/$id/model.bin",
+                    fileSizeBytes = 64L * 1024L * 1024L,
+                    sha256 = "a".repeat(64),
+                ),
+            ),
             supportedScales = listOf(4),
             minAppVersion = "0.1.0-alpha01",
             estimatedRamMb = 4_096,

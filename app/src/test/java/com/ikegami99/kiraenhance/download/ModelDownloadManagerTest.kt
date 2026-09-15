@@ -4,6 +4,7 @@ import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import com.ikegami99.kiraenhance.model.ControlType
 import com.ikegami99.kiraenhance.model.EnhancementMode
+import com.ikegami99.kiraenhance.model.ModelArtifactDescriptor
 import com.ikegami99.kiraenhance.model.ModelBackend
 import com.ikegami99.kiraenhance.model.ModelControlDescriptor
 import com.ikegami99.kiraenhance.model.ModelDescriptor
@@ -43,9 +44,14 @@ class ModelDownloadManagerTest {
         mode = EnhancementMode.BALANCED,
         version = "candidate-1",
         backend = ModelBackend.MNN,
-        downloadUrl = "https://example.invalid/pisa-sr.bin",
-        fileSizeBytes = 2_000_000,
-        sha256 = "b".repeat(64),
+        artifacts = listOf(
+            ModelArtifactDescriptor(
+                fileName = "model.mnn",
+                downloadUrl = "https://example.invalid/pisa-sr.mnn",
+                fileSizeBytes = 2_000_000,
+                sha256 = "b".repeat(64),
+            ),
+        ),
         supportedScales = listOf(2, 4),
         minAppVersion = "0.1.0-alpha01",
         estimatedRamMb = 8_000,

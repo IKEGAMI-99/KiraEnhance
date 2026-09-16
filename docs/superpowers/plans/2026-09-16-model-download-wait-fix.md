@@ -4,7 +4,7 @@
 
 **Goal:** Make model downloads start on ordinary connected networks by default, explain WorkManager waiting states clearly, and safely restart queued work when Wi-Fi-only is disabled.
 
-**Architecture:** Keep WorkManager and the existing `ModelDownloadWorker`, including resume/checksum/HTTP 416 behavior. Add a small pure UI-state reducer for WorkInfo-state-to-message mapping, make `wifiOnly` default false, and guard observers by active request ID so replaced work cannot overwrite newer state.
+**Architecture:** Keep WorkManager and the existing `ModelDownloadWorker`, including resume/checksum/HTTP 416 behavior. Add a pure reducer for WorkInfo waiting states, make `wifiOnly` default false, encode restart behavior as a tested decision that explicitly preserves partial files, and guard observers by active request ID so replaced work cannot overwrite newer state.
 
 **Tech Stack:** Kotlin, Android WorkManager 2.11.2, Compose Material 3, JUnit 4, Android Compose UI tests.
 
@@ -14,10 +14,10 @@
 
 - Android `minSdk = 28`, `targetSdk = 36`.
 - Default model download network policy is `NetworkType.CONNECTED`.
-- Wi-Fi-only mode remains available and maps to `NetworkType.UNMETERED`.
-- Existing partial-file resume, SHA-256 verification, and HTTP 416 restart-from-zero behavior must remain unchanged.
-- Switching Wi-Fi-only off while queued/blocked must replace the unique work without deleting partial files.
-- Stale callbacks from replaced WorkManager requests must not mutate current UI state.
+- Wi-Fi-only mode maps to `NetworkType.UNMETERED`.
+- Existing partial-file resume, SHA-256 verification, and HTTP 416 restart-from-zero behavior remain unchanged.
+- Switching Wi-Fi-only off while queued/blocked replaces the unique work without deleting partial files.
+- Stale callbacks from replaced WorkManager requests do not mutate current UI state.
 
 ---
 
@@ -50,31 +50,19 @@ class ModelDownloadUiReducerTest {
     }
 
     @Test
-    fun queuedWifiOnlyExplainsUnmeteredWait() {
+    fun waitingMessagesExplainWhyWorkHasNotStarted() {
         assertEquals(
             "Wi‑Fiのみ設定のため、非従量制ネットワークを待っています",
             ModelDownloadUiReducer.waitingMessage(ModelDownloadState.QUEUED, wifiOnly = true),
         )
-    }
-
-    @Test
-    fun queuedConnectedExplainsGenericWait() {
         assertEquals(
             "ネットワーク接続または実行開始を待っています",
             ModelDownloadUiReducer.waitingMessage(ModelDownloadState.QUEUED, wifiOnly = false),
         )
-    }
-
-    @Test
-    fun blockedExplainsPrerequisiteWait() {
         assertEquals(
             "前提となる処理の完了を待っています",
             ModelDownloadUiReducer.waitingMessage(ModelDownloadState.BLOCKED, wifiOnly = false),
         )
-    }
-
-    @Test
-    fun runningHasNoWaitingMessage() {
         assertNull(ModelDownloadUiReducer.waitingMessage(ModelDownloadState.RUNNING, wifiOnly = false))
     }
 }
@@ -82,17 +70,15 @@ class ModelDownloadUiReducerTest {
 
 - [ ] **Step 2: Run the focused test and verify RED**
 
-Run:
-
 ```bash
 gradle :app:testDebugUnitTest --tests 'com.ikegami99.kiraenhance.ui.models.ModelDownloadUiReducerTest' --stacktrace
 ```
 
 Expected: compilation failure because `ModelDownloadUiReducer` and `ModelDownloadState.BLOCKED` do not exist.
 
-- [ ] **Step 3: Implement the minimal reducer and enum state**
+- [ ] **Step 3: Implement the reducer and distinct WorkInfo mapping**
 
-Add `BLOCKED` to `ModelDownloadState`, then add this internal object in `ModelManagerViewModel.kt`:
+Add `BLOCKED` to `ModelDownloadState`, then add:
 
 ```kotlin
 internal object ModelDownloadUiReducer {
@@ -117,7 +103,25 @@ internal object ModelDownloadUiReducer {
 }
 ```
 
-Update the WorkInfo observer so `ENQUEUED` and `BLOCKED` are handled separately instead of sharing one branch.
+Replace the shared `ENQUEUED/BLOCKED` observer branch with:
+
+```kotlin
+WorkInfo.State.ENQUEUED -> updateCard(model.id) {
+    it.copy(
+        downloadState = ModelDownloadState.QUEUED,
+        bytesDownloaded = downloaded,
+        totalBytes = total,
+    )
+}
+
+WorkInfo.State.BLOCKED -> updateCard(model.id) {
+    it.copy(
+        downloadState = ModelDownloadState.BLOCKED,
+        bytesDownloaded = downloaded,
+        totalBytes = total,
+    )
+}
+```
 
 - [ ] **Step 4: Run the focused test and verify GREEN**
 
@@ -136,7 +140,7 @@ git commit -m "fix: expose model download wait states"
 
 ---
 
-### Task 2: Default downloads to CONNECTED and safely replace waiting work
+### Task 2: Default downloads to CONNECTED and restart waiting work without deleting partials
 
 **Files:**
 - Modify: `app/src/main/java/com/ikegami99/kiraenhance/ui/models/ModelManagerViewModel.kt`
@@ -144,52 +148,49 @@ git commit -m "fix: expose model download wait states"
 - Modify: `app/src/test/java/com/ikegami99/kiraenhance/ui/models/ModelDownloadUiReducerTest.kt`
 
 **Interfaces:**
-- Consumes: `ModelDownloadManager.enqueue(model, wifiOnly, replaceExisting)`
+- Consumes: `ModelDownloadManager.enqueue(model: ModelDescriptor, wifiOnly: Boolean, replaceExisting: Boolean): UUID`
 - Produces: `ModelManagerUiState.wifiOnly = false`
-- Produces: `ModelDownloadUiReducer.shouldReplaceForNetworkChange(previousWifiOnly: Boolean, newWifiOnly: Boolean, state: ModelDownloadState): Boolean`
+- Produces: `data class ModelDownloadRestartDecision(val replaceExisting: Boolean, val deleteLocalFiles: Boolean)`
+- Produces: `ModelDownloadUiReducer.restartDecision(previousWifiOnly: Boolean, newWifiOnly: Boolean, state: ModelDownloadState): ModelDownloadRestartDecision?`
 - Produces: `activeRequestIds: MutableMap<String, UUID>` in `ModelManagerViewModel`
 
-- [ ] **Step 1: Add failing policy tests**
+- [ ] **Step 1: Add failing restart-policy tests**
 
-Append:
+Append to `ModelDownloadUiReducerTest.kt`:
 
 ```kotlin
 @Test
-fun disablingWifiOnlyRestartsWaitingWork() {
-    assertTrue(
-        ModelDownloadUiReducer.shouldReplaceForNetworkChange(
-            previousWifiOnly = true,
-            newWifiOnly = false,
-            state = ModelDownloadState.QUEUED,
-        ),
+fun disablingWifiOnlyReplacesWaitingWorkAndPreservesPartialFiles() {
+    val queued = ModelDownloadUiReducer.restartDecision(
+        previousWifiOnly = true,
+        newWifiOnly = false,
+        state = ModelDownloadState.QUEUED,
     )
-    assertTrue(
-        ModelDownloadUiReducer.shouldReplaceForNetworkChange(
-            previousWifiOnly = true,
-            newWifiOnly = false,
-            state = ModelDownloadState.BLOCKED,
-        ),
+    assertEquals(ModelDownloadRestartDecision(replaceExisting = true, deleteLocalFiles = false), queued)
+
+    val blocked = ModelDownloadUiReducer.restartDecision(
+        previousWifiOnly = true,
+        newWifiOnly = false,
+        state = ModelDownloadState.BLOCKED,
     )
-    assertFalse(
-        ModelDownloadUiReducer.shouldReplaceForNetworkChange(
+    assertEquals(ModelDownloadRestartDecision(replaceExisting = true, deleteLocalFiles = false), blocked)
+
+    assertNull(
+        ModelDownloadUiReducer.restartDecision(
             previousWifiOnly = true,
             newWifiOnly = false,
             state = ModelDownloadState.RUNNING,
         ),
     )
 }
-```
 
-Also add to `ModelDownloadManagerTest`:
-
-```kotlin
 @Test
-fun defaultPolicyUsesConnectedNetwork() {
-    assertEquals(NetworkType.CONNECTED, ModelDownloadManager.networkTypeFor(wifiOnly = false))
+fun modelManagerDefaultsWifiOnlyOff() {
+    assertEquals(false, ModelManagerUiState().wifiOnly)
 }
 ```
 
-Import `assertTrue` and `assertFalse` where needed.
+`ModelDownloadManagerTest` already proves `wifiOnly = false` maps to `NetworkType.CONNECTED`; retain that test as the network-policy regression.
 
 - [ ] **Step 2: Run tests and verify RED**
 
@@ -197,21 +198,39 @@ Import `assertTrue` and `assertFalse` where needed.
 gradle :app:testDebugUnitTest --tests 'com.ikegami99.kiraenhance.ui.models.ModelDownloadUiReducerTest' --tests 'com.ikegami99.kiraenhance.download.ModelDownloadManagerTest' --stacktrace
 ```
 
-Expected: `shouldReplaceForNetworkChange` unresolved.
+Expected: compilation failure because `ModelDownloadRestartDecision` and `restartDecision` do not exist, and the default is still true.
 
-- [ ] **Step 3: Implement restart policy and stale-observer guard**
+- [ ] **Step 3: Implement the tested restart decision**
 
 Add:
 
 ```kotlin
-fun shouldReplaceForNetworkChange(
+data class ModelDownloadRestartDecision(
+    val replaceExisting: Boolean,
+    val deleteLocalFiles: Boolean,
+)
+```
+
+Add to `ModelDownloadUiReducer`:
+
+```kotlin
+fun restartDecision(
     previousWifiOnly: Boolean,
     newWifiOnly: Boolean,
     state: ModelDownloadState,
-): Boolean = previousWifiOnly && !newWifiOnly && state in setOf(
-    ModelDownloadState.QUEUED,
-    ModelDownloadState.BLOCKED,
-)
+): ModelDownloadRestartDecision? =
+    if (
+        previousWifiOnly &&
+        !newWifiOnly &&
+        state in setOf(ModelDownloadState.QUEUED, ModelDownloadState.BLOCKED)
+    ) {
+        ModelDownloadRestartDecision(
+            replaceExisting = true,
+            deleteLocalFiles = false,
+        )
+    } else {
+        null
+    }
 ```
 
 Change `ModelManagerUiState` to:
@@ -220,16 +239,18 @@ Change `ModelManagerUiState` to:
 val wifiOnly: Boolean = false,
 ```
 
-Add to the ViewModel:
+- [ ] **Step 4: Track the active request and restart without file deletion**
+
+Add:
 
 ```kotlin
 private val activeRequestIds = mutableMapOf<String, UUID>()
 ```
 
-Refactor enqueueing into:
+Add this helper:
 
 ```kotlin
-private fun enqueueDownload(model: ModelDescriptor, replaceExisting: Boolean) {
+private fun enqueueDownload(model: ModelDescriptor, replaceExisting: Boolean): UUID {
     val requestId = downloadManager.enqueue(
         model = model,
         wifiOnly = _state.value.wifiOnly,
@@ -237,78 +258,83 @@ private fun enqueueDownload(model: ModelDescriptor, replaceExisting: Boolean) {
     )
     activeRequestIds.put(model.id, requestId)?.let(::removeObserver)
     observeDownload(model, requestId)
+    return requestId
 }
 ```
 
-In `setWifiOnly`, capture the previous state, update the flag, then restart only waiting models without deleting model or partial files:
+Implement `setWifiOnly` as:
 
 ```kotlin
 fun setWifiOnly(enabled: Boolean) {
     val previous = _state.value
     _state.value = previous.copy(wifiOnly = enabled)
 
-    previous.cards
-        .filter { card ->
-            ModelDownloadUiReducer.shouldReplaceForNetworkChange(
-                previousWifiOnly = previous.wifiOnly,
-                newWifiOnly = enabled,
-                state = card.downloadState,
+    previous.cards.forEach { card ->
+        val decision = ModelDownloadUiReducer.restartDecision(
+            previousWifiOnly = previous.wifiOnly,
+            newWifiOnly = enabled,
+            state = card.downloadState,
+        ) ?: return@forEach
+
+        check(!decision.deleteLocalFiles)
+        enqueueDownload(card.model, replaceExisting = decision.replaceExisting)
+        updateCard(card.model.id) {
+            it.copy(
+                downloadState = ModelDownloadState.QUEUED,
+                errorMessage = null,
             )
         }
-        .forEach { card ->
-            enqueueDownload(card.model, replaceExisting = true)
-            updateCard(card.model.id) {
-                it.copy(downloadState = ModelDownloadState.QUEUED, errorMessage = null)
-            }
-        }
+    }
 }
 ```
 
-At the top of each WorkInfo observer callback, ignore stale request IDs:
+Do not call `removeLocalModelFiles` from this network-setting restart path. Keep `removeLocalModelFiles` only for delete/reinstall behavior.
+
+At the beginning of the `Observer<WorkInfo?>` callback add:
 
 ```kotlin
 if (activeRequestIds[model.id] != requestId) return@Observer
 ```
 
-On terminal states, remove the active ID only when it still equals the callback request:
+On `SUCCEEDED`, `FAILED`, and `CANCELLED`, use:
 
 ```kotlin
 activeRequestIds.remove(model.id, requestId)
 removeObserver(requestId)
 ```
 
-Use `enqueueDownload(...)` from the ordinary `download()` path so request tracking is consistent.
+Change the ordinary `download()` path to call `enqueueDownload(card.model, replaceExisting = reinstalling)` instead of calling `downloadManager.enqueue` directly.
 
-- [ ] **Step 4: Run focused tests and full unit tests**
+- [ ] **Step 5: Run full unit tests**
 
 ```bash
 gradle :app:testDebugUnitTest --stacktrace
 ```
 
-Expected: PASS, including the existing HTTP 416 regression test.
+Expected: PASS, including `ModelDownloadResumeTest` for HTTP 416.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add app/src/main/java/com/ikegami99/kiraenhance/ui/models/ModelManagerViewModel.kt app/src/test/java/com/ikegami99/kiraenhance/download/ModelDownloadManagerTest.kt app/src/test/java/com/ikegami99/kiraenhance/ui/models/ModelDownloadUiReducerTest.kt
-git commit -m "fix: restart model downloads when wifi-only is disabled"
+git commit -m "fix: restart waiting model downloads on connected networks"
 ```
 
 ---
 
-### Task 3: Show useful waiting text in the model manager UI
+### Task 3: Render the waiting reason and verify the branch build
 
 **Files:**
 - Modify: `app/src/main/java/com/ikegami99/kiraenhance/ui/models/ModelManagerScreen.kt`
 - Modify: `app/src/androidTest/java/com/ikegami99/kiraenhance/ui/models/ModelManagerScreenTest.kt`
 
 **Interfaces:**
-- Consumes: `ModelDownloadUiReducer.waitingMessage(...)`
-- Produces: `ModelCard(card, wifiOnly, ...)` rendering distinct queued/blocked text.
+- Consumes: `ModelDownloadUiReducer.waitingMessage(downloadState: ModelDownloadState, wifiOnly: Boolean): String?`
+- Produces: `ModelCard(card: ModelCardUiState, wifiOnly: Boolean, onDownload: () -> Unit, onDelete: () -> Unit, onOpenLicense: () -> Unit)`
 
 - [ ] **Step 1: Add failing Compose UI assertions**
 
-Create card state fixtures for queued Wi-Fi-only and blocked states, then assert these exact texts are displayed:
+Add one test rendering a queued card with `wifiOnly = true` and assert:
 
 ```kotlin
 composeRule.onNodeWithText(
@@ -316,7 +342,7 @@ composeRule.onNodeWithText(
 ).assertIsDisplayed()
 ```
 
-and:
+Add one test rendering a blocked card and assert:
 
 ```kotlin
 composeRule.onNodeWithText("前提となる処理の完了を待っています").assertIsDisplayed()
@@ -328,11 +354,11 @@ composeRule.onNodeWithText("前提となる処理の完了を待っています"
 gradle :app:assembleDebugAndroidTest --stacktrace
 ```
 
-Expected: test compilation or assertion fixture fails until the new `BLOCKED` rendering path is implemented.
+Expected: the new UI test does not pass until `BLOCKED` and `wifiOnly` are rendered distinctly.
 
-- [ ] **Step 3: Pass `state.wifiOnly` into each model card and render the reducer message**
+- [ ] **Step 3: Pass Wi-Fi policy into each card and render the reducer message**
 
-Change the call:
+Change the call to:
 
 ```kotlin
 ModelCard(
@@ -344,7 +370,7 @@ ModelCard(
 )
 ```
 
-Change the signature:
+Change the signature to:
 
 ```kotlin
 private fun ModelCard(
@@ -356,18 +382,27 @@ private fun ModelCard(
 )
 ```
 
-Render progress for both waiting states and use the reducer text:
+Replace the current queued/running block with:
 
 ```kotlin
-if (card.downloadState in setOf(ModelDownloadState.QUEUED, ModelDownloadState.BLOCKED, ModelDownloadState.RUNNING)) {
+if (card.downloadState in setOf(
+        ModelDownloadState.QUEUED,
+        ModelDownloadState.BLOCKED,
+        ModelDownloadState.RUNNING,
+    )
+) {
     val progress = if (card.totalBytes > 0L) {
         (card.bytesDownloaded.toFloat() / card.totalBytes.toFloat()).coerceIn(0f, 1f)
     } else {
         0f
     }
-    LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth())
+    LinearProgressIndicator(
+        progress = { progress },
+        modifier = Modifier.fillMaxWidth(),
+    )
+    val waitingMessage = ModelDownloadUiReducer.waitingMessage(card.downloadState, wifiOnly)
     Text(
-        text = ModelDownloadUiReducer.waitingMessage(card.downloadState, wifiOnly)
+        text = waitingMessage
             ?: "${(progress * 100).toInt()}% • ${formatBytes(card.bytesDownloaded)} / ${formatBytes(card.totalBytes)}",
         style = MaterialTheme.typography.labelMedium,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -375,13 +410,13 @@ if (card.downloadState in setOf(ModelDownloadState.QUEUED, ModelDownloadState.BL
 }
 ```
 
-- [ ] **Step 4: Run full CI-equivalent verification**
+- [ ] **Step 4: Run CI-equivalent verification**
 
 ```bash
 gradle :app:assembleDebug :app:testDebugUnitTest :app:assembleDebugAndroidTest --stacktrace
 ```
 
-Expected: all tasks PASS.
+Expected: all three tasks complete successfully.
 
 - [ ] **Step 5: Commit**
 
@@ -392,30 +427,26 @@ git commit -m "fix: explain model download waiting state"
 
 ---
 
-### Task 4: Real-device acceptance on the POCO-class target
+### Task 4: Real-device acceptance
 
 **Files:**
-- No source changes unless the acceptance test exposes a new bug.
+- No source files.
 
 **Interfaces:**
-- Validates the completed model download behavior against actual Android network classification.
+- Validates real Android network classification and partial-resume behavior.
 
-- [ ] **Step 1: Install the CI debug APK over the current debug build**
+- [ ] **Step 1: Install the branch CI debug APK on the target phone**
 
-Use the artifact produced by the branch CI.
+Use the APK artifact built from the final commit of Tasks 1-3.
 
-- [ ] **Step 2: Verify default behavior**
+- [ ] **Step 2: Verify default connected-network behavior**
 
 Open Model Manager and confirm `Wi‑Fiのみでモデルをダウンロード` is OFF by default. Tap UltraSharp `ダウンロード` and verify state reaches RUNNING instead of remaining indefinitely at QUEUED.
 
-- [ ] **Step 3: Verify Wi-Fi-only behavior**
+- [ ] **Step 3: Verify Wi-Fi-only restart**
 
-Turn Wi-Fi-only ON. On a network Android classifies as metered/non-unmetered, verify the explanatory waiting message appears. Turn Wi-Fi-only OFF while still waiting and verify the same download restarts and resumes without deleting already-downloaded bytes.
+Turn Wi-Fi-only ON, start UltraSharp on a network Android does not classify as unmetered, confirm the explanatory waiting message, then turn Wi-Fi-only OFF and confirm the same work is replaced and proceeds without losing already-downloaded partial bytes.
 
-- [ ] **Step 4: Verify model integrity**
+- [ ] **Step 4: Verify integrity**
 
-Confirm the UltraSharp model reaches installed state only after both artifacts pass expected file-size and SHA-256 checks.
-
-- [ ] **Step 5: Record acceptance result in the next development note/commit message**
-
-No code commit is required when all checks pass; any discovered defect gets its own failing test before a fix.
+Confirm UltraSharp becomes installed only after both model artifacts match their manifest file sizes and SHA-256 values.

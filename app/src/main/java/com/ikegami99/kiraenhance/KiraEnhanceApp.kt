@@ -15,9 +15,15 @@ import com.ikegami99.kiraenhance.ui.home.HomeScreen
 import com.ikegami99.kiraenhance.ui.models.ModelManagerScreen
 import com.ikegami99.kiraenhance.ui.models.ModelManagerViewModel
 import com.ikegami99.kiraenhance.ui.models.ModelManagerViewModelFactory
+import com.ikegami99.kiraenhance.ui.smoke.NcnnSmokeRoute
+import com.ikegami99.kiraenhance.ui.update.AppUpdateScreen
+import com.ikegami99.kiraenhance.ui.update.AppUpdateViewModel
+import com.ikegami99.kiraenhance.ui.update.AppUpdateViewModelFactory
 
 private const val HOME_ROUTE = "home"
 private const val MODELS_ROUTE = "models"
+private const val SMOKE_ROUTE = "smoke"
+private const val UPDATE_ROUTE = "update"
 
 @Composable
 fun KiraEnhanceApp() {
@@ -31,7 +37,8 @@ fun KiraEnhanceApp() {
         composable(HOME_ROUTE) {
             HomeScreen(
                 onOpenModelManager = { navController.navigate(MODELS_ROUTE) },
-                onOpenSmokeTest = {},
+                onOpenSmokeTest = { navController.navigate(SMOKE_ROUTE) },
+                onOpenAppUpdate = { navController.navigate(UPDATE_ROUTE) },
             )
         }
         composable(MODELS_ROUTE) {
@@ -54,6 +61,27 @@ fun KiraEnhanceApp() {
                         )
                     }
                 },
+            )
+        }
+        composable(SMOKE_ROUTE) {
+            NcnnSmokeRoute(
+                onBack = { navController.popBackStack() },
+                onOpenModelManager = { navController.navigate(MODELS_ROUTE) },
+            )
+        }
+        composable(UPDATE_ROUTE) {
+            val factory = remember(context.applicationContext) {
+                AppUpdateViewModelFactory(context.applicationContext)
+            }
+            val updateViewModel: AppUpdateViewModel = viewModel(factory = factory)
+            val state by updateViewModel.state.collectAsStateWithLifecycle()
+
+            AppUpdateScreen(
+                state = state,
+                onBack = { navController.popBackStack() },
+                onCheck = updateViewModel::checkForUpdates,
+                onDownload = updateViewModel::download,
+                onInstall = updateViewModel::install,
             )
         }
     }

@@ -4,8 +4,10 @@ on:
   push:
     branches:
       - 'feat/**'
+      - 'release/**'
     paths:
       - '.github/workflows/release.yml'
+      - 'release/release.json'
   workflow_dispatch:
     inputs:
       version_name:
@@ -33,14 +35,64 @@ jobs:
   release:
     runs-on: ubuntu-24.04
     env:
-      KIRAENHANCE_VERSION_NAME: ${{ github.event_name == 'workflow_dispatch' && inputs.version_name || format('0.0.0-ci.{0}', github.run_number) }}
-      KIRAENHANCE_VERSION_CODE: ${{ github.event_name == 'workflow_dispatch' && inputs.version_code || '2000000000' }}
-      RELEASE_NOTES: ${{ github.event_name == 'workflow_dispatch' && inputs.release_notes || format('Automatic release dry run for {0}', github.sha) }}
-      DRY_RUN: ${{ github.event_name != 'workflow_dispatch' || inputs.dry_run }}
+      INPUT_VERSION_NAME: ${{ inputs.version_name }}
+      INPUT_VERSION_CODE: ${{ inputs.version_code }}
+      INPUT_RELEASE_NOTES: ${{ inputs.release_notes }}
+      INPUT_DRY_RUN: ${{ inputs.dry_run }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Resolve release inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            VERSION_NAME="$INPUT_VERSION_NAME"
+            VERSION_CODE="$INPUT_VERSION_CODE"
+            RELEASE_NOTES_VALUE="$INPUT_RELEASE_NOTES"
+            DRY_RUN_VALUE="$INPUT_DRY_RUN"
+          elif [[ "$GITHUB_REF" == refs/heads/release/* ]]; then
+            VERSION_NAME="${GITHUB_REF_NAME#release/}"
+            test -f release/release.json || {
+              echo "release/release.json is required for release branches" >&2
+              exit 1
+            }
+            export RELEASE_CONFIG="$GITHUB_WORKSPACE/release/release.json"
+            VERSION_CODE="$(python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          data = json.loads(Path(os.environ['RELEASE_CONFIG']).read_text(encoding='utf-8'))
+          print(int(data['versionCode']))
+          PY
+            )"
+            RELEASE_NOTES_VALUE="$(python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          data = json.loads(Path(os.environ['RELEASE_CONFIG']).read_text(encoding='utf-8'))
+          print(str(data['releaseNotes']).strip())
+          PY
+            )"
+            DRY_RUN_VALUE=false
+          else
+            VERSION_NAME="0.0.0-ci.${GITHUB_RUN_NUMBER}"
+            VERSION_CODE=2000000000
+            RELEASE_NOTES_VALUE="Automatic release dry run for ${GITHUB_SHA}"
+            DRY_RUN_VALUE=true
+          fi
+
+          echo "KIRAENHANCE_VERSION_NAME=$VERSION_NAME" >> "$GITHUB_ENV"
+          echo "KIRAENHANCE_VERSION_CODE=$VERSION_CODE" >> "$GITHUB_ENV"
+          echo "DRY_RUN=$DRY_RUN_VALUE" >> "$GITHUB_ENV"
+          {
+            echo 'RELEASE_NOTES<<KIRA_NOTES_EOF'
+            printf '%s\n' "$RELEASE_NOTES_VALUE"
+            echo 'KIRA_NOTES_EOF'
+          } >> "$GITHUB_ENV"
 
       - name: Validate release inputs
         shell: bash

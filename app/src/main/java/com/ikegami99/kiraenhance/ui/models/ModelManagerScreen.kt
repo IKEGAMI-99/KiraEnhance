@@ -31,6 +31,20 @@ import com.ikegami99.kiraenhance.model.EnhancementMode
 import com.ikegami99.kiraenhance.model.ModelBackend
 import java.util.Locale
 
+internal object ModelCardStatusText {
+    fun textFor(
+        downloadState: ModelDownloadState,
+        wifiOnly: Boolean,
+        progressPercent: Int,
+        downloadedText: String,
+        totalText: String,
+    ): String? = ModelDownloadUiReducer.waitingMessage(downloadState, wifiOnly)
+        ?: when (downloadState) {
+            ModelDownloadState.RUNNING -> "$progressPercent% • $downloadedText / $totalText"
+            else -> null
+        }
+}
+
 @Composable
 fun ModelManagerScreen(
     state: ModelManagerUiState,
@@ -136,6 +150,7 @@ fun ModelManagerScreen(
         ) { card ->
             ModelCard(
                 card = card,
+                wifiOnly = state.wifiOnly,
                 onDownload = { onDownload(card.model.id) },
                 onDelete = { onDelete(card.model.id) },
                 onOpenLicense = { onOpenLicense(card.model.licenseUrl) },
@@ -242,6 +257,7 @@ private fun TierBadge(tier: SupportTier) {
 @Composable
 private fun ModelCard(
     card: ModelCardUiState,
+    wifiOnly: Boolean,
     onDownload: () -> Unit,
     onDelete: () -> Unit,
     onOpenLicense: () -> Unit,
@@ -345,25 +361,35 @@ private fun ModelCard(
                 )
             }
 
-            if (card.downloadState == ModelDownloadState.QUEUED || card.downloadState == ModelDownloadState.RUNNING) {
+            if (card.downloadState in setOf(
+                    ModelDownloadState.QUEUED,
+                    ModelDownloadState.BLOCKED,
+                    ModelDownloadState.RUNNING,
+                )
+            ) {
                 val progress = if (card.totalBytes > 0L) {
                     (card.bytesDownloaded.toFloat() / card.totalBytes.toFloat()).coerceIn(0f, 1f)
                 } else {
                     0f
                 }
+                val progressPercent = (progress * 100).toInt()
                 LinearProgressIndicator(
                     progress = { progress },
                     modifier = Modifier.fillMaxWidth(),
                 )
-                Text(
-                    text = if (card.downloadState == ModelDownloadState.QUEUED) {
-                        "ダウンロード待機中"
-                    } else {
-                        "${(progress * 100).toInt()}% • ${formatBytes(card.bytesDownloaded)} / ${formatBytes(card.totalBytes)}"
-                    },
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                ModelCardStatusText.textFor(
+                    downloadState = card.downloadState,
+                    wifiOnly = wifiOnly,
+                    progressPercent = progressPercent,
+                    downloadedText = formatBytes(card.bytesDownloaded),
+                    totalText = formatBytes(card.totalBytes),
+                )?.let { statusText ->
+                    Text(
+                        text = statusText,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
 
             card.errorMessage?.let { error ->
@@ -376,6 +402,11 @@ private fun ModelCard(
 
             Spacer(modifier = Modifier.height(2.dp))
 
+            val downloadBusy = card.downloadState in setOf(
+                ModelDownloadState.QUEUED,
+                ModelDownloadState.BLOCKED,
+                ModelDownloadState.RUNNING,
+            )
             if (card.installed) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -389,10 +420,7 @@ private fun ModelCard(
                     }
                     Button(
                         onClick = onDownload,
-                        enabled = card.downloadAvailable && card.downloadState !in setOf(
-                            ModelDownloadState.QUEUED,
-                            ModelDownloadState.RUNNING,
-                        ),
+                        enabled = card.downloadAvailable && !downloadBusy,
                         modifier = Modifier.weight(1f),
                     ) {
                         Text("再インストール")
@@ -401,10 +429,7 @@ private fun ModelCard(
             } else {
                 Button(
                     onClick = onDownload,
-                    enabled = card.downloadAvailable && card.downloadState !in setOf(
-                        ModelDownloadState.QUEUED,
-                        ModelDownloadState.RUNNING,
-                    ),
+                    enabled = card.downloadAvailable && !downloadBusy,
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     Text(if (card.downloadAvailable) "ダウンロード" else "配布準備中")

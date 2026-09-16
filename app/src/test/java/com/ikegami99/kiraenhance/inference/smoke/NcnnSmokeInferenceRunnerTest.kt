@@ -72,7 +72,12 @@ class NcnnSmokeInferenceRunnerTest {
         )
         val engine = FakeEngine(
             loadResult = ModelLoadResult.Failed(expected),
-            upscaleResult = error("upscale must not run"),
+            upscaleResult = UpscaleResult.Failed(
+                EngineError(
+                    code = EngineErrorCode.INFERENCE_FAILED,
+                    message = "unused",
+                ),
+            ),
         )
         val runner = NcnnSmokeInferenceRunner { engine }
 

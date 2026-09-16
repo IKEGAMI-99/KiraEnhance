@@ -149,75 +149,84 @@ class ModelDownloadWorker(
         totalBundleBytes: Long,
     ): Result? {
         var resumeOffset = if (partFile.exists()) partFile.length() else 0L
-        val requestBuilder = Request.Builder().url(artifact.url)
-        if (resumeOffset > 0L) {
-            requestBuilder.header("Range", "bytes=$resumeOffset-")
-        }
 
-        client.newCall(requestBuilder.build()).execute().use { response ->
-            if (response.code == 408 || response.code == 429 || response.code in 500..599) {
-                return Result.retry()
-            }
-            if (response.code !in listOf(200, 206)) {
-                return failure("Download failed with HTTP ${response.code}: ${artifact.fileName}")
+        while (true) {
+            val requestBuilder = Request.Builder().url(artifact.url)
+            if (resumeOffset > 0L) {
+                requestBuilder.header("Range", "bytes=$resumeOffset-")
             }
 
-            var append = resumeOffset > 0L && response.code == 206
-            if (resumeOffset > 0L && response.code == 200) {
-                resumeOffset = 0L
-                append = false
-            }
-
-            if (append) {
-                val contentRange = response.header("Content-Range")
-                if (contentRange == null || !contentRange.startsWith("bytes $resumeOffset-")) {
+            client.newCall(requestBuilder.build()).execute().use { response ->
+                if (shouldRestartFromZero(response.code, resumeOffset)) {
                     partFile.delete()
+                    resumeOffset = 0L
+                    return@use
+                }
+
+                if (response.code == 408 || response.code == 429 || response.code in 500..599) {
                     return Result.retry()
                 }
-            }
-
-            val body = response.body
-            FileOutputStream(partFile, append).use { output ->
-                body.byteStream().use { input ->
-                    val buffer = ByteArray(BUFFER_SIZE)
-                    var downloaded = resumeOffset
-                    var lastReportedBytes = resumeOffset
-                    var lastReportedAt = System.nanoTime()
-
-                    while (true) {
-                        if (isStopped) throw IOException("Download stopped")
-                        val read = input.read(buffer)
-                        if (read < 0) break
-                        if (read == 0) continue
-
-                        output.write(buffer, 0, read)
-                        downloaded += read
-                        if (downloaded > artifact.expectedSize) {
-                            output.flush()
-                            partFile.delete()
-                            return failure("Downloaded artifact is larger than expected: ${artifact.fileName}")
-                        }
-
-                        val now = System.nanoTime()
-                        val enoughBytes = downloaded - lastReportedBytes >= PROGRESS_BYTES
-                        val enoughTime = now - lastReportedAt >= PROGRESS_NANOS
-                        if (enoughBytes && enoughTime) {
-                            setProgressAsync(
-                                progressData(
-                                    modelId = modelId,
-                                    downloaded = baseCompletedBytes + downloaded,
-                                    total = totalBundleBytes,
-                                ),
-                            )
-                            lastReportedBytes = downloaded
-                            lastReportedAt = now
-                        }
-                    }
-                    output.fd.sync()
+                if (response.code !in listOf(200, 206)) {
+                    return failure("Download failed with HTTP ${response.code}: ${artifact.fileName}")
                 }
+
+                var append = resumeOffset > 0L && response.code == 206
+                if (resumeOffset > 0L && response.code == 200) {
+                    resumeOffset = 0L
+                    append = false
+                }
+
+                if (append) {
+                    val contentRange = response.header("Content-Range")
+                    if (contentRange == null || !contentRange.startsWith("bytes $resumeOffset-")) {
+                        partFile.delete()
+                        return Result.retry()
+                    }
+                }
+
+                val body = response.body
+                FileOutputStream(partFile, append).use { output ->
+                    body.byteStream().use { input ->
+                        val buffer = ByteArray(BUFFER_SIZE)
+                        var downloaded = resumeOffset
+                        var lastReportedBytes = resumeOffset
+                        var lastReportedAt = System.nanoTime()
+
+                        while (true) {
+                            if (isStopped) throw IOException("Download stopped")
+                            val read = input.read(buffer)
+                            if (read < 0) break
+                            if (read == 0) continue
+
+                            output.write(buffer, 0, read)
+                            downloaded += read
+                            if (downloaded > artifact.expectedSize) {
+                                output.flush()
+                                partFile.delete()
+                                return failure("Downloaded artifact is larger than expected: ${artifact.fileName}")
+                            }
+
+                            val now = System.nanoTime()
+                            val enoughBytes = downloaded - lastReportedBytes >= PROGRESS_BYTES
+                            val enoughTime = now - lastReportedAt >= PROGRESS_NANOS
+                            if (enoughBytes && enoughTime) {
+                                setProgressAsync(
+                                    progressData(
+                                        modelId = modelId,
+                                        downloaded = baseCompletedBytes + downloaded,
+                                        total = totalBundleBytes,
+                                    ),
+                                )
+                                lastReportedBytes = downloaded
+                                lastReportedAt = now
+                            }
+                        }
+                        output.fd.sync()
+                    }
+                }
+                return null
             }
         }
-        return null
     }
 
     private fun isValidCompletedFile(file: File, expectedSize: Long, expectedSha: String): Boolean =
@@ -277,6 +286,9 @@ class ModelDownloadWorker(
         internal fun artifactUrlKey(index: Int) = "artifactUrl_$index"
         internal fun artifactSha256Key(index: Int) = "artifactSha256_$index"
         internal fun artifactSizeKey(index: Int) = "artifactSize_$index"
+
+        internal fun shouldRestartFromZero(responseCode: Int, resumeOffset: Long): Boolean =
+            responseCode == 416 && resumeOffset > 0L
 
         private const val MAX_ARTIFACTS = 16
         private const val BUFFER_SIZE = 128 * 1024

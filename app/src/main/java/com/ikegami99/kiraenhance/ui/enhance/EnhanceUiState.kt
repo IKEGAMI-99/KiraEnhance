@@ -31,8 +31,10 @@ sealed interface EnhanceEvent {
         val elapsedMs: Long,
     ) : EnhanceEvent
     data class ProcessingCompleted(val elapsedMs: Long) : EnhanceEvent
+    data object Cancelled : EnhanceEvent
     data class Failed(val message: String) : EnhanceEvent
     data class Saved(val location: String) : EnhanceEvent
+    data class SaveFailed(val message: String) : EnhanceEvent
 }
 
 object EnhanceUiReducer {
@@ -84,6 +86,13 @@ object EnhanceUiReducer {
             status = "高画質化が完了しました",
         )
 
+        EnhanceEvent.Cancelled -> state.copy(
+            stage = EnhanceStage.READY,
+            progressFraction = 0f,
+            progressText = null,
+            status = "処理をキャンセルしました",
+        )
+
         is EnhanceEvent.Failed -> state.copy(
             stage = EnhanceStage.ERROR,
             status = event.message,
@@ -93,6 +102,11 @@ object EnhanceUiReducer {
             stage = EnhanceStage.SAVED,
             status = "画像を保存しました",
             savedLocation = event.location,
+        )
+
+        is EnhanceEvent.SaveFailed -> state.copy(
+            stage = EnhanceStage.COMPLETED,
+            status = "保存に失敗しました: ${event.message}",
         )
     }
 

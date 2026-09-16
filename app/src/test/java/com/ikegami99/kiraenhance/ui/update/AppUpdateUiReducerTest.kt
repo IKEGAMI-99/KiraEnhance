@@ -22,4 +22,15 @@ class AppUpdateUiReducerTest {
         assertEquals(0, AppUpdateUiReducer.progressPercent(-10L, 100L))
         assertEquals(0, AppUpdateUiReducer.progressPercent(10L, 0L))
     }
+
+    @Test
+    fun `primary action follows update stage`() {
+        assertEquals(AppUpdatePrimaryAction.CHECK, AppUpdateUiReducer.primaryActionFor(AppUpdateStage.IDLE))
+        assertEquals(AppUpdatePrimaryAction.NONE, AppUpdateUiReducer.primaryActionFor(AppUpdateStage.CHECKING))
+        assertEquals(AppUpdatePrimaryAction.CHECK, AppUpdateUiReducer.primaryActionFor(AppUpdateStage.UP_TO_DATE))
+        assertEquals(AppUpdatePrimaryAction.DOWNLOAD, AppUpdateUiReducer.primaryActionFor(AppUpdateStage.AVAILABLE))
+        assertEquals(AppUpdatePrimaryAction.NONE, AppUpdateUiReducer.primaryActionFor(AppUpdateStage.DOWNLOADING))
+        assertEquals(AppUpdatePrimaryAction.INSTALL, AppUpdateUiReducer.primaryActionFor(AppUpdateStage.READY_TO_INSTALL))
+        assertEquals(AppUpdatePrimaryAction.CHECK, AppUpdateUiReducer.primaryActionFor(AppUpdateStage.ERROR))
+    }
 }

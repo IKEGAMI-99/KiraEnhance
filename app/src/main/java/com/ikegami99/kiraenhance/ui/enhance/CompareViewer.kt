@@ -26,9 +26,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
-import kotlin.math.roundToInt
 
 @Composable
 fun CompareViewer(
@@ -96,12 +94,7 @@ fun CompareViewer(
             modifier = Modifier
                 .fillMaxHeight()
                 .width(18.dp)
-                .offset {
-                    IntOffset(
-                        x = (constraints.maxWidth * dividerFraction).roundToInt() - size.width / 2,
-                        y = 0,
-                    )
-                }
+                .offset(x = maxWidth * dividerFraction - 9.dp)
                 .pointerInput(constraints.maxWidth) {
                     detectHorizontalDragGestures { change, dragAmount ->
                         change.consume()

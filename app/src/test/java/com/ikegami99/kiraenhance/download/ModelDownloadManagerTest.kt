@@ -38,6 +38,11 @@ class ModelDownloadManagerTest {
         )
     }
 
+    @Test(expected = IllegalArgumentException::class)
+    fun rejectsPlaceholderArtifactsBeforeEnqueue() {
+        ModelDownloadManager.validateForDownload(model())
+    }
+
     @Test
     fun serializesEveryArtifactIntoWorkerData() {
         val model = model(

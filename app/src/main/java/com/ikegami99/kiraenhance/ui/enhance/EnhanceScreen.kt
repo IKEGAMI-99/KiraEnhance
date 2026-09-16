@@ -4,7 +4,6 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -97,6 +96,9 @@ private fun ReadyContent(
 ) {
     PreviewCard(sourcePreview, "選択した画像")
     ResolutionCard(state)
+    if (state.status == "処理をキャンセルしました") {
+        MessageCard("状態", state.status)
+    }
     MessageCard(
         title = "4x-UltraSharp",
         message = "端末内のncnn/Vulkanで4倍に高画質化します。画像データは外部へ送信しません。",
@@ -182,6 +184,8 @@ private fun CompletedContent(
     )
     if (state.stage == EnhanceStage.SAVED && state.savedLocation != null) {
         MessageCard("保存完了", state.savedLocation)
+    } else if (state.status.startsWith("保存に失敗しました")) {
+        MessageCard("保存エラー", state.status)
     }
     Button(
         onClick = onSave,

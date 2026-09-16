@@ -2,13 +2,14 @@ package com.ikegami99.kiraenhance.diagnostics
 
 import java.io.ByteArrayOutputStream
 import java.io.File
+import kotlin.io.path.createTempDirectory
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class DiagnosticLogStoreTest {
     @Test
     fun appendPersistsTimestampedEventAndExportCopiesIt() {
-        val dir = createTempDir(prefix = "kira-log-test-")
+        val dir = createTempDirectory(prefix = "kira-log-test-").toFile()
         val file = File(dir, "kiraenhance.log")
         val store = DiagnosticLogStore(
             file = file,

@@ -51,6 +51,17 @@ jobs:
           echo "NCNN_DIR=$NCNN_DIR" >> "$GITHUB_ENV"
           echo "Using ncnn CMake package: $NCNN_DIR"
 
+      - name: Inspect pinned UltraSharp param checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          FILE="$RUNNER_TEMP/4x-UltraSharp-fp16.param"
+          curl --fail --location --retry 3 \
+            --output "$FILE" \
+            'https://huggingface.co/Kim2091/UltraSharp/resolve/b32be1b8c6f81d1f6ef8ce11f016aad3a139d1e0/NCNN/4x-UltraSharp-fp16.param'
+          echo "ULTRASHARP_PARAM_BYTES=$(wc -c < "$FILE" | tr -d ' ')"
+          echo "ULTRASHARP_PARAM_SHA256=$(sha256sum "$FILE" | awk '{print $1}')"
+
       - name: Set up Gradle 9.6
         uses: gradle/actions/setup-gradle@v4
         with:

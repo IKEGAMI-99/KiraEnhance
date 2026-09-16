@@ -23,9 +23,11 @@ jobs:
           java-version: "17"
 
       - name: Install Android SDK packages
+        env:
+          SDKMANAGER: /usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager
         run: |
-          yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager "platform-tools" "platforms;android-37" "build-tools;36.0.0" "ndk;28.2.13676358"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" "platform-tools" "platforms;android-37" "build-tools;36.0.0" "ndk;28.2.13676358"
 
       - name: Set up Gradle 9.6
         uses: gradle/actions/setup-gradle@v4

@@ -12,6 +12,13 @@ enum class AppUpdateStage {
     ERROR,
 }
 
+enum class AppUpdatePrimaryAction {
+    NONE,
+    CHECK,
+    DOWNLOAD,
+    INSTALL,
+}
+
 internal object AppUpdateUiReducer {
     fun stageFor(workState: WorkInfo.State): AppUpdateStage = when (workState) {
         WorkInfo.State.ENQUEUED,
@@ -22,6 +29,19 @@ internal object AppUpdateUiReducer {
         WorkInfo.State.SUCCEEDED -> AppUpdateStage.READY_TO_INSTALL
         WorkInfo.State.FAILED -> AppUpdateStage.ERROR
         WorkInfo.State.CANCELLED -> AppUpdateStage.AVAILABLE
+    }
+
+    fun primaryActionFor(stage: AppUpdateStage): AppUpdatePrimaryAction = when (stage) {
+        AppUpdateStage.IDLE,
+        AppUpdateStage.UP_TO_DATE,
+        AppUpdateStage.ERROR,
+        -> AppUpdatePrimaryAction.CHECK
+
+        AppUpdateStage.AVAILABLE -> AppUpdatePrimaryAction.DOWNLOAD
+        AppUpdateStage.READY_TO_INSTALL -> AppUpdatePrimaryAction.INSTALL
+        AppUpdateStage.CHECKING,
+        AppUpdateStage.DOWNLOADING,
+        -> AppUpdatePrimaryAction.NONE
     }
 
     fun progressPercent(downloadedBytes: Long, totalBytes: Long): Int {

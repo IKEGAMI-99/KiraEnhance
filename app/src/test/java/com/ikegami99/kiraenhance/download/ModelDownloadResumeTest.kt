@@ -7,7 +7,7 @@ class ModelDownloadResumeTest {
     @Test
     fun http416WhileResumingRestartsFromZero() {
         assertTrue(
-            ModelDownloadWorker.shouldRestartFromZero(
+            RangeResumePolicy.shouldRestartFromZero(
                 responseCode = 416,
                 resumeOffset = 128L,
             ),

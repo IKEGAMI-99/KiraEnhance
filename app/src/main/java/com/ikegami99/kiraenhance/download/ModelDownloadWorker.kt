@@ -157,7 +157,7 @@ class ModelDownloadWorker(
             }
 
             client.newCall(requestBuilder.build()).execute().use { response ->
-                if (shouldRestartFromZero(response.code, resumeOffset)) {
+                if (RangeResumePolicy.shouldRestartFromZero(response.code, resumeOffset)) {
                     partFile.delete()
                     resumeOffset = 0L
                     return@use
@@ -286,9 +286,6 @@ class ModelDownloadWorker(
         internal fun artifactUrlKey(index: Int) = "artifactUrl_$index"
         internal fun artifactSha256Key(index: Int) = "artifactSha256_$index"
         internal fun artifactSizeKey(index: Int) = "artifactSize_$index"
-
-        internal fun shouldRestartFromZero(responseCode: Int, resumeOffset: Long): Boolean =
-            responseCode == 416 && resumeOffset > 0L
 
         private const val MAX_ARTIFACTS = 16
         private const val BUFFER_SIZE = 128 * 1024

@@ -15,6 +15,11 @@ on:
         description: "Release notes shown inside KiraEnhance"
         required: true
         type: string
+      dry_run:
+        description: "Validate the full release pipeline without production signing secrets or publishing"
+        required: true
+        default: true
+        type: boolean
 
 permissions:
   contents: write
@@ -26,6 +31,7 @@ jobs:
       KIRAENHANCE_VERSION_NAME: ${{ inputs.version_name }}
       KIRAENHANCE_VERSION_CODE: ${{ inputs.version_code }}
       RELEASE_NOTES: ${{ inputs.release_notes }}
+      DRY_RUN: ${{ inputs.dry_run }}
 
     steps:
       - name: Checkout
@@ -45,6 +51,10 @@ jobs:
           }
           test -n "$RELEASE_NOTES" || {
             echo "release_notes must not be blank" >&2
+            exit 1
+          }
+          [[ "$DRY_RUN" == "true" || "$DRY_RUN" == "false" ]] || {
+            echo "Invalid dry_run value: $DRY_RUN" >&2
             exit 1
           }
 
@@ -76,7 +86,7 @@ jobs:
               echo "No existing update manifest; treating this as the first signed release."
               ;;
             *)
-              echo "Could not verify the latest update manifest (HTTP $HTTP_STATUS). Refusing to publish." >&2
+              echo "Could not verify the latest update manifest (HTTP $HTTP_STATUS). Refusing to continue." >&2
               exit 1
               ;;
           esac
@@ -127,7 +137,29 @@ jobs:
           set -euo pipefail
           gradle :app:assembleRelease --stacktrace
 
-      - name: Decode signing key
+      - name: Create throwaway dry-run signing key
+        if: ${{ inputs.dry_run }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          DRY_RUN_KEYSTORE="$RUNNER_TEMP/kiraenhance-dry-run.jks"
+          keytool -genkeypair \
+            -keystore "$DRY_RUN_KEYSTORE" \
+            -storetype JKS \
+            -storepass 'kiraenhance-dry-run' \
+            -keypass 'kiraenhance-dry-run' \
+            -alias 'kiraenhance-dry-run' \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 1 \
+            -dname 'CN=KiraEnhance Dry Run, O=CI, C=JP' \
+            -noprompt
+          test -s "$DRY_RUN_KEYSTORE"
+          echo "SIGNING_KEYSTORE=$DRY_RUN_KEYSTORE" >> "$GITHUB_ENV"
+          echo "SIGNING_ALIAS=kiraenhance-dry-run" >> "$GITHUB_ENV"
+
+      - name: Decode production signing key
+        if: ${{ inputs.dry_run == false }}
         shell: bash
         env:
           KIRAENHANCE_KEYSTORE_BASE64: ${{ secrets.KIRAENHANCE_KEYSTORE_BASE64 }}
@@ -137,8 +169,10 @@ jobs:
             echo "Missing GitHub Secret: KIRAENHANCE_KEYSTORE_BASE64" >&2
             exit 1
           }
-          echo "$KIRAENHANCE_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/kiraenhance-release.jks"
-          test -s "$RUNNER_TEMP/kiraenhance-release.jks"
+          PRODUCTION_KEYSTORE="$RUNNER_TEMP/kiraenhance-release.jks"
+          echo "$KIRAENHANCE_KEYSTORE_BASE64" | base64 --decode > "$PRODUCTION_KEYSTORE"
+          test -s "$PRODUCTION_KEYSTORE"
+          echo "SIGNING_KEYSTORE=$PRODUCTION_KEYSTORE" >> "$GITHUB_ENV"
 
       - name: Align, sign, and verify APK
         shell: bash
@@ -148,36 +182,50 @@ jobs:
           KIRAENHANCE_KEY_PASSWORD: ${{ secrets.KIRAENHANCE_KEY_PASSWORD }}
         run: |
           set -euo pipefail
-          test -n "${KIRAENHANCE_KEYSTORE_PASSWORD:-}" || { echo "Missing KIRAENHANCE_KEYSTORE_PASSWORD" >&2; exit 1; }
-          test -n "${KIRAENHANCE_KEY_ALIAS:-}" || { echo "Missing KIRAENHANCE_KEY_ALIAS" >&2; exit 1; }
-          test -n "${KIRAENHANCE_KEY_PASSWORD:-}" || { echo "Missing KIRAENHANCE_KEY_PASSWORD" >&2; exit 1; }
 
+          if [[ "$DRY_RUN" == "true" ]]; then
+            APKSIGNER_KS_PASS='kiraenhance-dry-run'
+            APKSIGNER_KEY_PASS='kiraenhance-dry-run'
+            SIGNING_ALIAS='kiraenhance-dry-run'
+            OUTPUT_NAME="KiraEnhance-${KIRAENHANCE_VERSION_NAME}-DRY-RUN.apk"
+          else
+            test -n "${KIRAENHANCE_KEYSTORE_PASSWORD:-}" || { echo "Missing KIRAENHANCE_KEYSTORE_PASSWORD" >&2; exit 1; }
+            test -n "${KIRAENHANCE_KEY_ALIAS:-}" || { echo "Missing KIRAENHANCE_KEY_ALIAS" >&2; exit 1; }
+            test -n "${KIRAENHANCE_KEY_PASSWORD:-}" || { echo "Missing KIRAENHANCE_KEY_PASSWORD" >&2; exit 1; }
+            APKSIGNER_KS_PASS="$KIRAENHANCE_KEYSTORE_PASSWORD"
+            APKSIGNER_KEY_PASS="$KIRAENHANCE_KEY_PASSWORD"
+            SIGNING_ALIAS="$KIRAENHANCE_KEY_ALIAS"
+            OUTPUT_NAME="KiraEnhance-${KIRAENHANCE_VERSION_NAME}.apk"
+          fi
+
+          export APKSIGNER_KS_PASS APKSIGNER_KEY_PASS
           BUILD_TOOLS="$ANDROID_HOME/build-tools/36.0.0"
           UNSIGNED_APK="app/build/outputs/apk/release/app-release-unsigned.apk"
           DIST_DIR="$RUNNER_TEMP/kiraenhance-dist"
           ALIGNED_APK="$DIST_DIR/KiraEnhance-aligned.apk"
-          SIGNED_APK="$DIST_DIR/KiraEnhance-${KIRAENHANCE_VERSION_NAME}.apk"
+          UPDATE_APK="$DIST_DIR/$OUTPUT_NAME"
           mkdir -p "$DIST_DIR"
           test -f "$UNSIGNED_APK"
+          test -s "$SIGNING_KEYSTORE"
 
           "$BUILD_TOOLS/zipalign" -f -v 4 "$UNSIGNED_APK" "$ALIGNED_APK"
           "$BUILD_TOOLS/apksigner" sign \
-            --ks "$RUNNER_TEMP/kiraenhance-release.jks" \
-            --ks-key-alias "$KIRAENHANCE_KEY_ALIAS" \
-            --ks-pass env:KIRAENHANCE_KEYSTORE_PASSWORD \
-            --key-pass env:KIRAENHANCE_KEY_PASSWORD \
-            --out "$SIGNED_APK" \
+            --ks "$SIGNING_KEYSTORE" \
+            --ks-key-alias "$SIGNING_ALIAS" \
+            --ks-pass env:APKSIGNER_KS_PASS \
+            --key-pass env:APKSIGNER_KEY_PASS \
+            --out "$UPDATE_APK" \
             "$ALIGNED_APK"
-          "$BUILD_TOOLS/apksigner" verify --verbose --print-certs "$SIGNED_APK"
+          "$BUILD_TOOLS/apksigner" verify --verbose --print-certs "$UPDATE_APK"
 
-          echo "SIGNED_APK=$SIGNED_APK" >> "$GITHUB_ENV"
+          echo "UPDATE_APK=$UPDATE_APK" >> "$GITHUB_ENV"
           echo "DIST_DIR=$DIST_DIR" >> "$GITHUB_ENV"
 
       - name: Build update manifest
         shell: bash
         run: |
           set -euo pipefail
-          APK_SHA256="$(sha256sum "$SIGNED_APK" | awk '{print $1}')"
+          APK_SHA256="$(sha256sum "$UPDATE_APK" | awk '{print $1}')"
           export APK_SHA256
           export REPOSITORY="${GITHUB_REPOSITORY}"
           python3 - <<'PY'
@@ -206,7 +254,58 @@ jobs:
           PY
           printf '%s\n' "$RELEASE_NOTES" > "$DIST_DIR/release-notes.txt"
 
+      - name: Validate generated update manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          export REPOSITORY="${GITHUB_REPOSITORY}"
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          manifest_path = Path(os.environ["DIST_DIR"]) / "update-manifest.json"
+          apk_path = Path(os.environ["UPDATE_APK"])
+          manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+          expected_name = os.environ["KIRAENHANCE_VERSION_NAME"]
+          expected_code = int(os.environ["KIRAENHANCE_VERSION_CODE"])
+          expected_url = (
+              f"https://github.com/{os.environ['REPOSITORY']}/releases/download/"
+              f"v{expected_name}/KiraEnhance-{expected_name}.apk"
+          )
+          actual_sha = hashlib.sha256(apk_path.read_bytes()).hexdigest()
+
+          if manifest["versionName"] != expected_name:
+              raise SystemExit("Generated manifest versionName mismatch")
+          if int(manifest["versionCode"]) != expected_code:
+              raise SystemExit("Generated manifest versionCode mismatch")
+          if manifest["apkUrl"] != expected_url:
+              raise SystemExit("Generated manifest apkUrl mismatch")
+          if manifest["apkSha256"].lower() != actual_sha:
+              raise SystemExit("Generated manifest SHA-256 mismatch")
+          if not str(manifest["releaseNotes"]).strip():
+              raise SystemExit("Generated manifest releaseNotes is blank")
+
+          print(f"Manifest validated for {expected_name} ({expected_code})")
+          print(f"APK SHA-256: {actual_sha}")
+          PY
+
+      - name: Mark dry-run result
+        if: ${{ inputs.dry_run }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > "$DIST_DIR/DRY-RUN.txt" <<'EOF'
+          This APK was signed with a one-day throwaway CI key.
+          It is only for validating the release pipeline.
+          Do not publish it and do not use it as a production KiraEnhance update.
+          EOF
+          echo "Dry run validated successfully. No GitHub Release will be published."
+
       - name: Publish GitHub Release
+        if: ${{ inputs.dry_run == false }}
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -218,14 +317,26 @@ jobs:
             exit 1
           fi
           gh release create "$TAG" \
-            "$SIGNED_APK" \
+            "$UPDATE_APK" \
             "$DIST_DIR/update-manifest.json" \
             --target "$GITHUB_SHA" \
             --title "KiraEnhance ${KIRAENHANCE_VERSION_NAME}" \
             --notes-file "$DIST_DIR/release-notes.txt" \
             --latest
 
+      - name: Upload dry-run validation artifacts
+        if: ${{ inputs.dry_run }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: kiraenhance-release-dry-run-${{ inputs.version_name }}
+          path: |
+            ${{ runner.temp }}/kiraenhance-dist/KiraEnhance-${{ inputs.version_name }}-DRY-RUN.apk
+            ${{ runner.temp }}/kiraenhance-dist/update-manifest.json
+            ${{ runner.temp }}/kiraenhance-dist/DRY-RUN.txt
+          retention-days: 7
+
       - name: Upload signed release artifacts
+        if: ${{ inputs.dry_run == false }}
         uses: actions/upload-artifact@v4
         with:
           name: kiraenhance-release-${{ inputs.version_name }}

@@ -26,13 +26,14 @@ class DiagnosticLogStore(
         }
     }
 
-    fun copyTo(output: OutputStream) {
+    fun copyTo(output: OutputStream): Long {
         synchronized(FILE_LOCK) {
             if (!file.isFile) {
-                output.write("KiraEnhance diagnostic log is empty.\n".toByteArray(Charsets.UTF_8))
-                return
+                val fallback = "KiraEnhance diagnostic log is empty.\n".toByteArray(Charsets.UTF_8)
+                output.write(fallback)
+                return fallback.size.toLong()
             }
-            file.inputStream().use { input -> input.copyTo(output) }
+            return file.inputStream().use { input -> input.copyTo(output) }
         }
     }
 

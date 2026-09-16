@@ -46,7 +46,7 @@ class ModelDownloadManager(
             "model-download-${model.id}-${model.version}"
 
         internal fun workPolicyFor(replaceExisting: Boolean): ExistingWorkPolicy =
-            if (replaceExisting) ExistingWorkPolicy.REPLACE else ExistingWorkPolicy.KEEP
+            ExistingWorkPolicy.REPLACE
 
         internal fun inputDataFor(model: ModelDescriptor): Data {
             val builder = Data.Builder()

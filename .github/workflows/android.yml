@@ -27,7 +27,7 @@ jobs:
           SDKMANAGER: /usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager
         run: |
           yes | "$SDKMANAGER" --licenses >/dev/null || true
-          "$SDKMANAGER" "platform-tools" "platforms;android-37" "build-tools;36.0.0" "ndk;28.2.13676358"
+          "$SDKMANAGER" "platform-tools" "platforms;android-37.0" "build-tools;36.0.0" "ndk;28.2.13676358"
 
       - name: Set up Gradle 9.6
         uses: gradle/actions/setup-gradle@v4

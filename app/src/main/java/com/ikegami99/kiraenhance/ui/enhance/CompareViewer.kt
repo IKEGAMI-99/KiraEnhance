@@ -51,6 +51,8 @@ fun CompareViewer(
                 }
             },
     ) {
+        val containerWidth = maxWidth
+        val containerWidthPx = constraints.maxWidth
         val transformModifier = Modifier.graphicsLayer {
             scaleX = zoom
             scaleY = zoom
@@ -68,7 +70,7 @@ fun CompareViewer(
         Box(
             modifier = Modifier
                 .fillMaxHeight()
-                .width(maxWidth * dividerFraction)
+                .width(containerWidth * dividerFraction)
                 .clipToBounds(),
         ) {
             Image(
@@ -76,7 +78,7 @@ fun CompareViewer(
                 contentDescription = "高画質化後",
                 contentScale = ContentScale.Fit,
                 modifier = Modifier
-                    .requiredWidth(maxWidth)
+                    .requiredWidth(containerWidth)
                     .fillMaxHeight()
                     .then(transformModifier),
             )
@@ -97,13 +99,13 @@ fun CompareViewer(
             modifier = Modifier
                 .fillMaxHeight()
                 .width(18.dp)
-                .offset(x = maxWidth * dividerFraction - 9.dp)
-                .pointerInput(constraints.maxWidth) {
+                .offset(x = containerWidth * dividerFraction - 9.dp)
+                .pointerInput(containerWidthPx) {
                     detectHorizontalDragGestures { change, dragAmount ->
                         change.consume()
-                        if (constraints.maxWidth > 0) {
+                        if (containerWidthPx > 0) {
                             dividerFraction = (
-                                dividerFraction + dragAmount / constraints.maxWidth.toFloat()
+                                dividerFraction + dragAmount / containerWidthPx.toFloat()
                             ).coerceIn(MIN_DIVIDER, MAX_DIVIDER)
                         }
                     }

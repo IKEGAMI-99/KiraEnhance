@@ -56,6 +56,44 @@ class EnhanceUiStateTest {
     }
 
     @Test
+    fun `cancel returns to ready state without losing dimensions`() {
+        val processing = EnhanceUiState(
+            stage = EnhanceStage.PROCESSING,
+            sourceWidth = 100,
+            sourceHeight = 200,
+            targetWidth = 400,
+            targetHeight = 800,
+            progressFraction = 0.5f,
+        )
+
+        val cancelled = EnhanceUiReducer.reduce(processing, EnhanceEvent.Cancelled)
+
+        assertEquals(EnhanceStage.READY, cancelled.stage)
+        assertEquals(100, cancelled.sourceWidth)
+        assertEquals(800, cancelled.targetHeight)
+        assertEquals("処理をキャンセルしました", cancelled.status)
+    }
+
+    @Test
+    fun `save failure keeps completed result available`() {
+        val completed = EnhanceUiState(
+            stage = EnhanceStage.COMPLETED,
+            sourceWidth = 100,
+            sourceHeight = 200,
+            targetWidth = 400,
+            targetHeight = 800,
+        )
+
+        val failed = EnhanceUiReducer.reduce(
+            completed,
+            EnhanceEvent.SaveFailed("空き容量がありません"),
+        )
+
+        assertEquals(EnhanceStage.COMPLETED, failed.stage)
+        assertEquals("保存に失敗しました: 空き容量がありません", failed.status)
+    }
+
+    @Test
     fun `failure keeps actionable message`() {
         val failed = EnhanceUiReducer.reduce(
             EnhanceUiState(stage = EnhanceStage.PROCESSING),

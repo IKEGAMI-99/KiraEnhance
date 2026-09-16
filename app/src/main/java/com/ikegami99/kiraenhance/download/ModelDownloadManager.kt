@@ -7,6 +7,7 @@ import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequest
 import androidx.work.WorkManager
+import com.ikegami99.kiraenhance.diagnostics.AppDiagnosticLogger
 import com.ikegami99.kiraenhance.model.ModelDescriptor
 import java.util.UUID
 
@@ -14,13 +15,16 @@ class ModelDownloadManager(
     context: Context,
     private val workManager: WorkManager = WorkManager.getInstance(context.applicationContext),
 ) {
+    private val logger = AppDiagnosticLogger.get(context)
+
     fun enqueue(
         model: ModelDescriptor,
         wifiOnly: Boolean,
         replaceExisting: Boolean = false,
     ): UUID {
+        val networkType = networkTypeFor(wifiOnly)
         val constraints = Constraints.Builder()
-            .setRequiredNetworkType(networkTypeFor(wifiOnly))
+            .setRequiredNetworkType(networkType)
             .build()
 
         val request = OneTimeWorkRequest.Builder(ModelDownloadWorker::class.java)
@@ -29,10 +33,17 @@ class ModelDownloadManager(
             .addTag("model-download")
             .addTag("model-download-${model.id}")
             .build()
+        val policy = workPolicyFor(replaceExisting)
+
+        logger.log(
+            "ModelDownloadManager",
+            "enqueue model=${model.id} version=${model.version} request=${request.id} " +
+                "wifiOnly=$wifiOnly network=$networkType policy=$policy artifacts=${model.artifacts.size}",
+        )
 
         workManager.enqueueUniqueWork(
             workName(model),
-            workPolicyFor(replaceExisting),
+            policy,
             request,
         )
         return request.id
@@ -46,7 +57,7 @@ class ModelDownloadManager(
             "model-download-${model.id}-${model.version}"
 
         internal fun workPolicyFor(replaceExisting: Boolean): ExistingWorkPolicy =
-            if (replaceExisting) ExistingWorkPolicy.REPLACE else ExistingWorkPolicy.KEEP
+            ExistingWorkPolicy.REPLACE
 
         internal fun inputDataFor(model: ModelDescriptor): Data {
             val builder = Data.Builder()

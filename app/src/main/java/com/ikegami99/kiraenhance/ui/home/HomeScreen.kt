@@ -37,6 +37,7 @@ fun HomeScreen(
     onOpenModelManager: () -> Unit,
     onOpenSmokeTest: () -> Unit,
     onOpenAppUpdate: () -> Unit = {},
+    onSaveLogs: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     LazyColumn(
@@ -151,6 +152,12 @@ fun HomeScreen(
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     Text("アプリ更新")
+                }
+                OutlinedButton(
+                    onClick = onSaveLogs,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("ログを保存")
                 }
                 OutlinedButton(
                     onClick = onOpenSmokeTest,

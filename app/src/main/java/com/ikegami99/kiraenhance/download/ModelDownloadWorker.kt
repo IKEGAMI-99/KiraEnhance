@@ -4,12 +4,14 @@ import android.content.Context
 import androidx.work.Data
 import androidx.work.Worker
 import androidx.work.WorkerParameters
+import com.ikegami99.kiraenhance.diagnostics.AppDiagnosticLogger
 import com.ikegami99.kiraenhance.model.InstalledModelStore
 import com.ikegami99.kiraenhance.util.Sha256
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
 import java.lang.Math.addExact
+import java.net.URI
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
@@ -22,6 +24,7 @@ class ModelDownloadWorker(
 ) : Worker(appContext, workerParams) {
     private val client = OkHttpClient()
     private val store = InstalledModelStore(appContext)
+    private val logger = AppDiagnosticLogger.get(appContext)
 
     override fun doWork(): Result {
         val modelId = inputData.getString(KEY_MODEL_ID) ?: return failure("Missing model id")
@@ -32,6 +35,12 @@ class ModelDownloadWorker(
         } catch (_: ArithmeticException) {
             return failure("Model bundle is too large")
         }
+
+        logger.log(
+            TAG,
+            "start model=$modelId version=$version attempt=${runAttemptCount + 1} " +
+                "artifacts=${artifacts.size} totalBytes=$totalExpected",
+        )
 
         return try {
             var completedBytes = 0L
@@ -48,17 +57,24 @@ class ModelDownloadWorker(
                 }
 
                 if (isValidCompletedFile(finalFile, artifact.expectedSize, artifact.expectedSha)) {
+                    logger.log(TAG, "reuse verified file model=$modelId artifact=${artifact.fileName}")
                     completedBytes = addExact(completedBytes, artifact.expectedSize)
                     setProgressAsync(progressData(modelId, completedBytes, totalExpected))
                     return@forEach
                 }
 
                 if (preparePartialFile(partFile, artifact, finalFile)) {
+                    logger.log(TAG, "activate complete partial model=$modelId artifact=${artifact.fileName}")
                     completedBytes = addExact(completedBytes, artifact.expectedSize)
                     setProgressAsync(progressData(modelId, completedBytes, totalExpected))
                     return@forEach
                 }
 
+                logger.log(
+                    TAG,
+                    "artifact begin model=$modelId artifact=${artifact.fileName} " +
+                        "expectedBytes=${artifact.expectedSize} partialBytes=${partFile.length()}",
+                )
                 downloadArtifact(
                     modelId = modelId,
                     artifact = artifact,
@@ -69,28 +85,44 @@ class ModelDownloadWorker(
 
                 if (partFile.length() != artifact.expectedSize) {
                     return if (partFile.length() < artifact.expectedSize) {
-                        Result.retry()
+                        retry(
+                            "short download model=$modelId artifact=${artifact.fileName} " +
+                                "actual=${partFile.length()} expected=${artifact.expectedSize}",
+                        )
                     } else {
                         partFile.delete()
                         failure("Downloaded artifact is larger than expected: ${artifact.fileName}")
                     }
                 }
 
+                logger.log(TAG, "sha256 verify model=$modelId artifact=${artifact.fileName}")
                 if (!Sha256.matches(partFile, artifact.expectedSha)) {
                     partFile.delete()
                     return failure("SHA-256 verification failed: ${artifact.fileName}")
                 }
+                logger.log(TAG, "sha256 ok model=$modelId artifact=${artifact.fileName}")
 
                 activate(partFile, finalFile)
                 completedBytes = addExact(completedBytes, artifact.expectedSize)
                 setProgressAsync(progressData(modelId, completedBytes, totalExpected))
+                logger.log(
+                    TAG,
+                    "artifact complete model=$modelId artifact=${artifact.fileName} " +
+                        "completedBytes=$completedBytes totalBytes=$totalExpected",
+                )
             }
 
+            logger.log(TAG, "success model=$modelId totalBytes=$totalExpected")
             Result.success(successData(modelId, totalExpected))
-        } catch (_: IOException) {
-            Result.retry()
+        } catch (error: IOException) {
+            retry(
+                "io exception model=$modelId type=${error.javaClass.simpleName} " +
+                    "message=${error.message ?: "no-message"}",
+            )
         } catch (error: RuntimeException) {
-            failure(error.message ?: "Model download failed")
+            failure(
+                "${error.javaClass.simpleName}: ${error.message ?: "Model download failed"}",
+            )
         }
     }
 
@@ -127,6 +159,11 @@ class ModelDownloadWorker(
         if (!partFile.exists()) return false
 
         if (partFile.length() > artifact.expectedSize) {
+            logger.log(
+                TAG,
+                "discard oversized partial artifact=${artifact.fileName} " +
+                    "actual=${partFile.length()} expected=${artifact.expectedSize}",
+            )
             partFile.delete()
             return false
         }
@@ -136,6 +173,7 @@ class ModelDownloadWorker(
                 activate(partFile, finalFile)
                 return true
             }
+            logger.log(TAG, "discard sha mismatch partial artifact=${artifact.fileName}")
             partFile.delete()
         }
         return false
@@ -156,15 +194,34 @@ class ModelDownloadWorker(
                 requestBuilder.header("Range", "bytes=$resumeOffset-")
             }
 
+            logger.log(
+                HTTP_TAG,
+                "request model=$modelId artifact=${artifact.fileName} offset=$resumeOffset " +
+                    "url=${safeUrlForLog(artifact.url)}",
+            )
+
             client.newCall(requestBuilder.build()).execute().use { response ->
+                logger.log(
+                    HTTP_TAG,
+                    "response model=$modelId artifact=${artifact.fileName} http=${response.code} " +
+                        "contentLength=${response.body.contentLength()} " +
+                        "contentRange=${response.header("Content-Range") ?: "none"}",
+                )
+
                 if (RangeResumePolicy.shouldRestartFromZero(response.code, resumeOffset)) {
+                    logger.log(
+                        HTTP_TAG,
+                        "range restart model=$modelId artifact=${artifact.fileName} http=${response.code}",
+                    )
                     partFile.delete()
                     resumeOffset = 0L
                     return@use
                 }
 
                 if (response.code == 408 || response.code == 429 || response.code in 500..599) {
-                    return Result.retry()
+                    return retry(
+                        "retryable HTTP ${response.code} model=$modelId artifact=${artifact.fileName}",
+                    )
                 }
                 if (response.code !in listOf(200, 206)) {
                     return failure("Download failed with HTTP ${response.code}: ${artifact.fileName}")
@@ -172,6 +229,10 @@ class ModelDownloadWorker(
 
                 var append = resumeOffset > 0L && response.code == 206
                 if (resumeOffset > 0L && response.code == 200) {
+                    logger.log(
+                        HTTP_TAG,
+                        "server ignored range; restarting model=$modelId artifact=${artifact.fileName}",
+                    )
                     resumeOffset = 0L
                     append = false
                 }
@@ -180,7 +241,10 @@ class ModelDownloadWorker(
                     val contentRange = response.header("Content-Range")
                     if (contentRange == null || !contentRange.startsWith("bytes $resumeOffset-")) {
                         partFile.delete()
-                        return Result.retry()
+                        return retry(
+                            "invalid Content-Range model=$modelId artifact=${artifact.fileName} " +
+                                "offset=$resumeOffset value=${contentRange ?: "none"}",
+                        )
                     }
                 }
 
@@ -217,6 +281,12 @@ class ModelDownloadWorker(
                                         total = totalBundleBytes,
                                     ),
                                 )
+                                logger.log(
+                                    TAG,
+                                    "progress model=$modelId artifact=${artifact.fileName} " +
+                                        "artifactBytes=$downloaded bundleBytes=${baseCompletedBytes + downloaded} " +
+                                        "totalBytes=$totalBundleBytes",
+                                )
                                 lastReportedBytes = downloaded
                                 lastReportedAt = now
                             }
@@ -224,6 +294,10 @@ class ModelDownloadWorker(
                         output.fd.sync()
                     }
                 }
+                logger.log(
+                    HTTP_TAG,
+                    "body complete model=$modelId artifact=${artifact.fileName} bytes=${partFile.length()}",
+                )
                 return null
             }
         }
@@ -262,8 +336,25 @@ class ModelDownloadWorker(
             .putLong(KEY_TOTAL_BYTES, total)
             .build()
 
-    private fun failure(message: String): Result =
-        Result.failure(Data.Builder().putString(KEY_ERROR, message).build())
+    private fun retry(reason: String): Result {
+        logger.log(TAG, "retry attempt=${runAttemptCount + 1} reason=$reason")
+        return Result.retry()
+    }
+
+    private fun failure(message: String): Result {
+        logger.log(TAG, "failure attempt=${runAttemptCount + 1} message=$message")
+        return Result.failure(Data.Builder().putString(KEY_ERROR, message).build())
+    }
+
+    private fun safeUrlForLog(url: String): String = runCatching {
+        val uri = URI(url)
+        buildString {
+            append(uri.scheme ?: "https")
+            append("://")
+            append(uri.host ?: "unknown-host")
+            append(uri.rawPath ?: "")
+        }
+    }.getOrDefault("<invalid-url>")
 
     private data class DownloadArtifact(
         val fileName: String,
@@ -287,6 +378,8 @@ class ModelDownloadWorker(
         internal fun artifactSha256Key(index: Int) = "artifactSha256_$index"
         internal fun artifactSizeKey(index: Int) = "artifactSize_$index"
 
+        private const val TAG = "ModelDownloadWorker"
+        private const val HTTP_TAG = "ModelDownloadHttp"
         private const val MAX_ARTIFACTS = 16
         private const val BUFFER_SIZE = 128 * 1024
         private const val PROGRESS_BYTES = 1024L * 1024L

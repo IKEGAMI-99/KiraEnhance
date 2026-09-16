@@ -27,9 +27,9 @@ class ModelDownloadManagerTest {
     }
 
     @Test
-    fun reinstallReplacesExistingUniqueWork() {
+    fun everyUserEnqueueReplacesStaleUniqueWork() {
         assertEquals(
-            ExistingWorkPolicy.KEEP,
+            ExistingWorkPolicy.REPLACE,
             ModelDownloadManager.workPolicyFor(replaceExisting = false),
         )
         assertEquals(

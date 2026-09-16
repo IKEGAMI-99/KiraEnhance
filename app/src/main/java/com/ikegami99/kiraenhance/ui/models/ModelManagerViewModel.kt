@@ -10,6 +10,7 @@ import androidx.work.WorkManager
 import com.ikegami99.kiraenhance.device.DeviceCapabilities
 import com.ikegami99.kiraenhance.device.DeviceCapabilityDetector
 import com.ikegami99.kiraenhance.device.SupportTier
+import com.ikegami99.kiraenhance.diagnostics.AppDiagnosticLogger
 import com.ikegami99.kiraenhance.download.ModelDownloadManager
 import com.ikegami99.kiraenhance.download.ModelDownloadWorker
 import com.ikegami99.kiraenhance.model.InstalledModelStore
@@ -24,6 +25,7 @@ import kotlinx.coroutines.flow.asStateFlow
 enum class ModelDownloadState {
     IDLE,
     QUEUED,
+    RETRY_WAIT,
     BLOCKED,
     RUNNING,
     SUCCEEDED,
@@ -36,8 +38,16 @@ internal data class ModelDownloadRestartDecision(
 )
 
 internal object ModelDownloadUiReducer {
-    fun stateFor(workState: WorkInfo.State): ModelDownloadState = when (workState) {
-        WorkInfo.State.ENQUEUED -> ModelDownloadState.QUEUED
+    fun stateFor(
+        workState: WorkInfo.State,
+        runAttemptCount: Int = 0,
+    ): ModelDownloadState = when (workState) {
+        WorkInfo.State.ENQUEUED -> if (runAttemptCount > 0) {
+            ModelDownloadState.RETRY_WAIT
+        } else {
+            ModelDownloadState.QUEUED
+        }
+
         WorkInfo.State.BLOCKED -> ModelDownloadState.BLOCKED
         WorkInfo.State.RUNNING -> ModelDownloadState.RUNNING
         WorkInfo.State.SUCCEEDED -> ModelDownloadState.SUCCEEDED
@@ -52,6 +62,7 @@ internal object ModelDownloadUiReducer {
             "ネットワーク接続または実行開始を待っています"
         }
 
+        ModelDownloadState.RETRY_WAIT -> "ダウンロード再試行を待っています"
         ModelDownloadState.BLOCKED -> "前提となる処理の完了を待っています"
         else -> null
     }
@@ -64,7 +75,11 @@ internal object ModelDownloadUiReducer {
         if (
             previousWifiOnly &&
             !newWifiOnly &&
-            state in setOf(ModelDownloadState.QUEUED, ModelDownloadState.BLOCKED)
+            state in setOf(
+                ModelDownloadState.QUEUED,
+                ModelDownloadState.RETRY_WAIT,
+                ModelDownloadState.BLOCKED,
+            )
         ) {
             ModelDownloadRestartDecision(
                 replaceExisting = true,
@@ -99,6 +114,7 @@ class ModelManagerViewModel(
     private val deviceDetector: DeviceCapabilityDetector,
     private val downloadManager: ModelDownloadManager,
     private val workManager: WorkManager,
+    private val logger: AppDiagnosticLogger,
     initialError: String? = null,
 ) : ViewModel() {
     private val _state = MutableStateFlow(ModelManagerUiState(errorMessage = initialError))
@@ -114,6 +130,7 @@ class ModelManagerViewModel(
     fun setWifiOnly(enabled: Boolean) {
         val previous = _state.value
         _state.value = previous.copy(wifiOnly = enabled)
+        logger.log("ModelManager", "wifiOnly changed from=${previous.wifiOnly} to=$enabled")
 
         previous.cards.forEach { card ->
             val decision = ModelDownloadUiReducer.restartDecision(
@@ -135,6 +152,11 @@ class ModelManagerViewModel(
 
     fun download(modelId: String) {
         val card = _state.value.cards.firstOrNull { it.model.id == modelId } ?: return
+        logger.log(
+            "ModelManager",
+            "download tapped model=$modelId state=${card.downloadState} installed=${card.installed} " +
+                "available=${card.downloadAvailable} wifiOnly=${_state.value.wifiOnly}",
+        )
         if (!card.downloadAvailable) {
             updateCard(modelId) {
                 it.copy(errorMessage = "このモデルは配布URLの準備中です")
@@ -144,9 +166,11 @@ class ModelManagerViewModel(
         if (card.downloadState in setOf(
                 ModelDownloadState.RUNNING,
                 ModelDownloadState.QUEUED,
+                ModelDownloadState.RETRY_WAIT,
                 ModelDownloadState.BLOCKED,
             )
         ) {
+            logger.log("ModelManager", "download ignored because work is busy model=$modelId")
             return
         }
 
@@ -170,6 +194,7 @@ class ModelManagerViewModel(
 
     fun delete(modelId: String) {
         val card = _state.value.cards.firstOrNull { it.model.id == modelId } ?: return
+        logger.log("ModelManager", "delete model=$modelId")
         activeRequestIds.remove(modelId)?.let(::removeObserver)
         workManager.cancelUniqueWork(ModelDownloadManager.workName(card.model))
         if (!removeLocalModelFiles(card)) return
@@ -204,6 +229,11 @@ class ModelManagerViewModel(
     }.fold(
         onSuccess = { true },
         onFailure = { error ->
+            logger.log(
+                "ModelManager",
+                "delete failed model=${card.model.id} type=${error.javaClass.simpleName} " +
+                    "message=${error.message ?: "no-message"}",
+            )
             updateCard(card.model.id) {
                 it.copy(errorMessage = error.message ?: "モデルの削除に失敗しました")
             }
@@ -244,11 +274,18 @@ class ModelManagerViewModel(
             val total = info.progress.getLong(ModelDownloadWorker.KEY_TOTAL_BYTES, model.totalFileSizeBytes)
                 .takeIf { it > 0L }
                 ?: model.totalFileSizeBytes
+            val uiState = ModelDownloadUiReducer.stateFor(info.state, info.runAttemptCount)
+
+            logger.log(
+                "WorkManager",
+                "model=${model.id} request=$requestId state=${info.state} uiState=$uiState " +
+                    "attempt=${info.runAttemptCount} bytes=$downloaded/$total",
+            )
 
             when (info.state) {
                 WorkInfo.State.ENQUEUED -> updateCard(model.id) {
                     it.copy(
-                        downloadState = ModelDownloadState.QUEUED,
+                        downloadState = uiState,
                         bytesDownloaded = downloaded,
                         totalBytes = total,
                     )
@@ -285,18 +322,24 @@ class ModelManagerViewModel(
                 }
 
                 WorkInfo.State.FAILED -> {
+                    val error = info.outputData.getString(ModelDownloadWorker.KEY_ERROR)
+                        ?: "モデルのダウンロードに失敗しました"
+                    logger.log(
+                        "WorkManager",
+                        "failed model=${model.id} request=$requestId attempt=${info.runAttemptCount} error=$error",
+                    )
                     updateCard(model.id) {
                         it.copy(
                             installed = store.isInstalled(model),
                             downloadState = ModelDownloadState.FAILED,
-                            errorMessage = info.outputData.getString(ModelDownloadWorker.KEY_ERROR)
-                                ?: "モデルのダウンロードに失敗しました",
+                            errorMessage = error,
                         )
                     }
                     finishObservation(model.id, requestId)
                 }
 
                 WorkInfo.State.CANCELLED -> {
+                    logger.log("WorkManager", "cancelled model=${model.id} request=$requestId")
                     updateCard(model.id) {
                         it.copy(
                             installed = store.isInstalled(model),
@@ -378,6 +421,7 @@ class ModelManagerViewModelFactory(
             deviceDetector = DeviceCapabilityDetector(appContext),
             downloadManager = ModelDownloadManager(appContext),
             workManager = WorkManager.getInstance(appContext),
+            logger = AppDiagnosticLogger.get(appContext),
             initialError = initialError,
         ) as T
     }

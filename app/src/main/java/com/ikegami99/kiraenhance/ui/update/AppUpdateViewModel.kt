@@ -8,6 +8,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
+import com.ikegami99.kiraenhance.diagnostics.AppDiagnosticLogger
 import com.ikegami99.kiraenhance.update.AndroidAppUpdateInstallPlatform
 import com.ikegami99.kiraenhance.update.AppUpdateCheckResult
 import com.ikegami99.kiraenhance.update.AppUpdateDownloadManager
@@ -42,6 +43,7 @@ class AppUpdateViewModel(
     private val downloadManager: AppUpdateDownloadManager,
     private val workManager: WorkManager,
     private val installer: AppUpdateInstaller,
+    private val diagnosticLogger: AppDiagnosticLogger,
     private val currentVersionCode: Int,
     currentVersionName: String,
 ) : ViewModel() {
@@ -56,6 +58,10 @@ class AppUpdateViewModel(
     fun checkForUpdates() {
         if (_state.value.stage in setOf(AppUpdateStage.CHECKING, AppUpdateStage.DOWNLOADING)) return
 
+        diagnosticLogger.log(
+            "AppUpdate",
+            "check start currentVersion=${_state.value.currentVersionName} currentVersionCode=$currentVersionCode",
+        )
         _state.value = _state.value.copy(
             stage = AppUpdateStage.CHECKING,
             latestVersionName = null,
@@ -69,8 +75,15 @@ class AppUpdateViewModel(
 
         viewModelScope.launch(Dispatchers.IO) {
             runCatching { checker.check(currentVersionCode) }
-                .onSuccess(::applyCheckResult)
+                .onSuccess { result ->
+                    diagnosticLogger.log("AppUpdate", "check success result=${result.javaClass.simpleName}")
+                    applyCheckResult(result)
+                }
                 .onFailure { error ->
+                    diagnosticLogger.log(
+                        "AppUpdate",
+                        "check failed type=${error.javaClass.simpleName} message=${error.message ?: "no-message"}",
+                    )
                     _state.value = _state.value.copy(
                         stage = AppUpdateStage.ERROR,
                         errorMessage = error.message ?: "更新確認に失敗しました",
@@ -84,6 +97,10 @@ class AppUpdateViewModel(
         if (_state.value.stage == AppUpdateStage.DOWNLOADING) return
 
         val requestId = downloadManager.enqueue(info)
+        diagnosticLogger.log(
+            "AppUpdate",
+            "download enqueue request=$requestId version=${info.versionName} versionCode=${info.versionCode}",
+        )
         removeWorkObserver()
         activeRequestId = requestId
         _state.value = _state.value.copy(
@@ -100,9 +117,11 @@ class AppUpdateViewModel(
     fun install() {
         val apkPath = _state.value.apkPath ?: return
         val apkFile = File(apkPath)
+        diagnosticLogger.log("AppUpdate", "install requested apk=${apkFile.name} bytes=${apkFile.length()}")
 
         runCatching { installer.begin(apkFile) }
             .onSuccess { step ->
+                diagnosticLogger.log("AppUpdate", "install step=$step")
                 _state.value = _state.value.copy(
                     statusMessage = when (step) {
                         AppUpdateInstallStep.REQUEST_UNKNOWN_SOURCES ->
@@ -115,6 +134,10 @@ class AppUpdateViewModel(
                 )
             }
             .onFailure { error ->
+                diagnosticLogger.log(
+                    "AppUpdate",
+                    "install failed type=${error.javaClass.simpleName} message=${error.message ?: "no-message"}",
+                )
                 _state.value = _state.value.copy(
                     errorMessage = error.message ?: "インストーラを開けませんでした",
                 )
@@ -123,21 +146,30 @@ class AppUpdateViewModel(
 
     private fun applyCheckResult(result: AppUpdateCheckResult) {
         _state.value = when (result) {
-            is AppUpdateCheckResult.Available -> _state.value.copy(
-                stage = AppUpdateStage.AVAILABLE,
-                latestVersionName = result.info.versionName,
-                updateInfo = result.info,
-                statusMessage = "新しいバージョンがあります",
-                errorMessage = null,
-            )
+            is AppUpdateCheckResult.Available -> {
+                diagnosticLogger.log(
+                    "AppUpdate",
+                    "available version=${result.info.versionName} versionCode=${result.info.versionCode}",
+                )
+                _state.value.copy(
+                    stage = AppUpdateStage.AVAILABLE,
+                    latestVersionName = result.info.versionName,
+                    updateInfo = result.info,
+                    statusMessage = "新しいバージョンがあります",
+                    errorMessage = null,
+                )
+            }
 
-            is AppUpdateCheckResult.UpToDate -> _state.value.copy(
-                stage = AppUpdateStage.UP_TO_DATE,
-                latestVersionName = result.latestVersionName,
-                updateInfo = null,
-                statusMessage = "最新バージョンです",
-                errorMessage = null,
-            )
+            is AppUpdateCheckResult.UpToDate -> {
+                diagnosticLogger.log("AppUpdate", "up-to-date latest=${result.latestVersionName}")
+                _state.value.copy(
+                    stage = AppUpdateStage.UP_TO_DATE,
+                    latestVersionName = result.latestVersionName,
+                    updateInfo = null,
+                    statusMessage = "最新バージョンです",
+                    errorMessage = null,
+                )
+            }
         }
     }
 
@@ -188,11 +220,19 @@ class AppUpdateViewModel(
                 WorkInfo.State.SUCCEEDED -> {
                     val apkPath = info.outputData.getString(AppUpdateDownloadWorker.KEY_APK_PATH)
                     if (apkPath.isNullOrBlank()) {
+                        diagnosticLogger.log(
+                            "AppUpdate",
+                            "download failed request=$requestId reason=missing-apk-path bytes=$downloaded/$total",
+                        )
                         _state.value = _state.value.copy(
                             stage = AppUpdateStage.ERROR,
                             errorMessage = "検証済みAPKの保存先を取得できませんでした",
                         )
                     } else {
+                        diagnosticLogger.log(
+                            "AppUpdate",
+                            "download success request=$requestId bytes=$downloaded/$total apk=${File(apkPath).name}",
+                        )
                         _state.value = _state.value.copy(
                             stage = AppUpdateStage.READY_TO_INSTALL,
                             bytesDownloaded = downloaded,
@@ -206,15 +246,21 @@ class AppUpdateViewModel(
                 }
 
                 WorkInfo.State.FAILED -> {
+                    val message = info.outputData.getString(AppUpdateDownloadWorker.KEY_ERROR)
+                        ?: "更新APKのダウンロードに失敗しました"
+                    diagnosticLogger.log(
+                        "AppUpdate",
+                        "download failed request=$requestId bytes=$downloaded/$total message=$message",
+                    )
                     _state.value = _state.value.copy(
                         stage = AppUpdateStage.ERROR,
-                        errorMessage = info.outputData.getString(AppUpdateDownloadWorker.KEY_ERROR)
-                            ?: "更新APKのダウンロードに失敗しました",
+                        errorMessage = message,
                     )
                     finishObservation(requestId)
                 }
 
                 WorkInfo.State.CANCELLED -> {
+                    diagnosticLogger.log("AppUpdate", "download cancelled request=$requestId")
                     _state.value = _state.value.copy(
                         stage = AppUpdateStage.AVAILABLE,
                         bytesDownloaded = 0L,
@@ -279,6 +325,7 @@ class AppUpdateViewModelFactory(
             downloadManager = AppUpdateDownloadManager(appContext),
             workManager = WorkManager.getInstance(appContext),
             installer = AppUpdateInstaller(AndroidAppUpdateInstallPlatform(appContext)),
+            diagnosticLogger = AppDiagnosticLogger.get(appContext),
             currentVersionCode = packageInfo.longVersionCode.toInt(),
             currentVersionName = packageInfo.versionName ?: "unknown",
         ) as T

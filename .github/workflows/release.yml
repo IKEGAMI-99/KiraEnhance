@@ -1,6 +1,11 @@
 name: Release Android
 
 on:
+  push:
+    branches:
+      - 'feat/ncnn-inference'
+    paths:
+      - '.github/workflows/release.yml'
   workflow_dispatch:
     inputs:
       version_name:
@@ -28,10 +33,10 @@ jobs:
   release:
     runs-on: ubuntu-24.04
     env:
-      KIRAENHANCE_VERSION_NAME: ${{ inputs.version_name }}
-      KIRAENHANCE_VERSION_CODE: ${{ inputs.version_code }}
-      RELEASE_NOTES: ${{ inputs.release_notes }}
-      DRY_RUN: ${{ inputs.dry_run }}
+      KIRAENHANCE_VERSION_NAME: ${{ github.event_name == 'workflow_dispatch' && inputs.version_name || format('0.0.0-ci.{0}', github.run_number) }}
+      KIRAENHANCE_VERSION_CODE: ${{ github.event_name == 'workflow_dispatch' && inputs.version_code || '2000000000' }}
+      RELEASE_NOTES: ${{ github.event_name == 'workflow_dispatch' && inputs.release_notes || format('Automatic release dry run for {0}', github.sha) }}
+      DRY_RUN: ${{ github.event_name != 'workflow_dispatch' || inputs.dry_run }}
 
     steps:
       - name: Checkout
@@ -138,7 +143,7 @@ jobs:
           gradle :app:assembleRelease --stacktrace
 
       - name: Create throwaway dry-run signing key
-        if: ${{ inputs.dry_run }}
+        if: ${{ env.DRY_RUN == 'true' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -156,10 +161,9 @@ jobs:
             -noprompt
           test -s "$DRY_RUN_KEYSTORE"
           echo "SIGNING_KEYSTORE=$DRY_RUN_KEYSTORE" >> "$GITHUB_ENV"
-          echo "SIGNING_ALIAS=kiraenhance-dry-run" >> "$GITHUB_ENV"
 
       - name: Decode production signing key
-        if: ${{ inputs.dry_run == false }}
+        if: ${{ env.DRY_RUN != 'true' }}
         shell: bash
         env:
           KIRAENHANCE_KEYSTORE_BASE64: ${{ secrets.KIRAENHANCE_KEYSTORE_BASE64 }}
@@ -293,7 +297,7 @@ jobs:
           PY
 
       - name: Mark dry-run result
-        if: ${{ inputs.dry_run }}
+        if: ${{ env.DRY_RUN == 'true' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -305,7 +309,7 @@ jobs:
           echo "Dry run validated successfully. No GitHub Release will be published."
 
       - name: Publish GitHub Release
-        if: ${{ inputs.dry_run == false }}
+        if: ${{ env.DRY_RUN != 'true' }}
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -325,22 +329,22 @@ jobs:
             --latest
 
       - name: Upload dry-run validation artifacts
-        if: ${{ inputs.dry_run }}
+        if: ${{ env.DRY_RUN == 'true' }}
         uses: actions/upload-artifact@v4
         with:
-          name: kiraenhance-release-dry-run-${{ inputs.version_name }}
+          name: kiraenhance-release-dry-run-${{ env.KIRAENHANCE_VERSION_NAME }}
           path: |
-            ${{ runner.temp }}/kiraenhance-dist/KiraEnhance-${{ inputs.version_name }}-DRY-RUN.apk
+            ${{ runner.temp }}/kiraenhance-dist/KiraEnhance-${{ env.KIRAENHANCE_VERSION_NAME }}-DRY-RUN.apk
             ${{ runner.temp }}/kiraenhance-dist/update-manifest.json
             ${{ runner.temp }}/kiraenhance-dist/DRY-RUN.txt
           retention-days: 7
 
       - name: Upload signed release artifacts
-        if: ${{ inputs.dry_run == false }}
+        if: ${{ env.DRY_RUN != 'true' }}
         uses: actions/upload-artifact@v4
         with:
-          name: kiraenhance-release-${{ inputs.version_name }}
+          name: kiraenhance-release-${{ env.KIRAENHANCE_VERSION_NAME }}
           path: |
-            ${{ runner.temp }}/kiraenhance-dist/KiraEnhance-${{ inputs.version_name }}.apk
+            ${{ runner.temp }}/kiraenhance-dist/KiraEnhance-${{ env.KIRAENHANCE_VERSION_NAME }}.apk
             ${{ runner.temp }}/kiraenhance-dist/update-manifest.json
           retention-days: 30

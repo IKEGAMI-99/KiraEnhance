@@ -1,0 +1,88 @@
+{
+  "_comment": "Example metadata only. No model binaries are distributed from this file; verify each model license before public hosting.",
+  "schemaVersion": 1,
+  "models": [
+    {
+      "id": "realesrgan-anime",
+      "displayName": "RealESRGAN Anime candidate",
+      "mode": "FIDELITY",
+      "version": "1.0.0",
+      "backend": "NCNN",
+      "downloadUrl": "https://example.com/models/realesrgan-anime.bin",
+      "fileSizeBytes": 1000000,
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "supportedScales": [4],
+      "minAppVersion": "0.1.0",
+      "estimatedRamMb": 3500,
+      "licenseName": "VERIFY-BEFORE-DISTRIBUTION",
+      "licenseUrl": "https://example.com/license",
+      "description": "Fast structure-preserving candidate for Fidelity mode.",
+      "community": false,
+      "controls": []
+    },
+    {
+      "id": "pisa-sr",
+      "displayName": "PiSA-SR",
+      "mode": "BALANCED",
+      "version": "1.0.0",
+      "backend": "MNN",
+      "downloadUrl": "https://example.com/models/pisa-sr.mnn",
+      "fileSizeBytes": 2000000,
+      "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "supportedScales": [2, 4],
+      "minAppVersion": "0.1.0",
+      "estimatedRamMb": 6000,
+      "licenseName": "VERIFY-BEFORE-DISTRIBUTION",
+      "licenseUrl": "https://example.com/license",
+      "description": "Required Balanced-mode target. Conversion and on-device inference are implemented in a later milestone.",
+      "community": false,
+      "controls": [
+        {
+          "id": "fidelityStrength",
+          "displayName": "忠実度",
+          "type": "SLIDER",
+          "min": 0.0,
+          "max": 1.0,
+          "defaultValue": 0.65,
+          "choices": []
+        }
+      ]
+    },
+    {
+      "id": "hat-s",
+      "displayName": "HAT-S candidate",
+      "mode": "DETAIL",
+      "version": "1.0.0",
+      "backend": "MNN",
+      "downloadUrl": "https://example.com/models/hat-s.mnn",
+      "fileSizeBytes": 3000000,
+      "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "supportedScales": [4],
+      "minAppVersion": "0.1.0",
+      "estimatedRamMb": 7000,
+      "licenseName": "VERIFY-BEFORE-DISTRIBUTION",
+      "licenseUrl": "https://example.com/license",
+      "description": "Detail-oriented candidate for hair, cloth and edge reconstruction.",
+      "community": false,
+      "controls": []
+    },
+    {
+      "id": "4x-ultrasharp",
+      "displayName": "4x-UltraSharp",
+      "mode": "ULTRASHARP",
+      "version": "1.0.0",
+      "backend": "NCNN",
+      "downloadUrl": "https://example.com/models/4x-ultrasharp.bin",
+      "fileSizeBytes": 4000000,
+      "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "supportedScales": [4],
+      "minAppVersion": "0.1.0",
+      "estimatedRamMb": 4500,
+      "licenseName": "Community model license - verify redistribution terms",
+      "licenseUrl": "https://example.com/community-license",
+      "description": "Optional familiar sharpness baseline. Use user-supplied installation if redistribution is not permitted.",
+      "community": true,
+      "controls": []
+    }
+  ]
+}

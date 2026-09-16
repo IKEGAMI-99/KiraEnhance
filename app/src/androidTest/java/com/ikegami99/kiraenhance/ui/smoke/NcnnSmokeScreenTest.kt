@@ -1,7 +1,10 @@
 package com.ikegami99.kiraenhance.ui.smoke
 
+import android.graphics.Bitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import org.junit.Rule
 import org.junit.Test
@@ -47,5 +50,29 @@ class NcnnSmokeScreenTest {
 
         composeRule.onNodeWithText("画像を選ぶ").assertIsDisplayed()
         composeRule.onNodeWithText("4xで実行").assertIsDisplayed()
+    }
+
+    @Test
+    fun selectedAndUpscaledImagesShowPreviews() {
+        val preview = Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888).asImageBitmap()
+
+        composeRule.setContent {
+            NcnnSmokeContent(
+                state = NcnnSmokeScreenState(
+                    modelInstalled = true,
+                    status = "成功",
+                    imageSelected = true,
+                ),
+                inputPreview = preview,
+                outputPreview = preview,
+                onBack = {},
+                onSelectImage = {},
+                onRun = {},
+                onOpenModelManager = {},
+            )
+        }
+
+        composeRule.onNodeWithContentDescription("入力プレビュー").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("出力プレビュー").assertIsDisplayed()
     }
 }

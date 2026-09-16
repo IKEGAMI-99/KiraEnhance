@@ -76,16 +76,6 @@ fun AppUpdateScreen(
                     UpdateStatus(state)
 
                     when (state.stage) {
-                        AppUpdateStage.IDLE,
-                        AppUpdateStage.UP_TO_DATE,
-                        AppUpdateStage.ERROR,
-                        -> Button(
-                            onClick = onCheck,
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            Text(if (state.stage == AppUpdateStage.IDLE) "更新を確認" else "もう一度確認")
-                        }
-
                         AppUpdateStage.CHECKING -> {
                             LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                             Text(
@@ -95,21 +85,13 @@ fun AppUpdateScreen(
                             )
                         }
 
-                        AppUpdateStage.AVAILABLE -> Button(
-                            onClick = onDownload,
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            Text("アップデートをダウンロード")
-                        }
-
                         AppUpdateStage.DOWNLOADING -> DownloadProgress(state)
-
-                        AppUpdateStage.READY_TO_INSTALL -> Button(
-                            onClick = onInstall,
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            Text("インストール")
-                        }
+                        else -> UpdatePrimaryAction(
+                            stage = state.stage,
+                            onCheck = onCheck,
+                            onDownload = onDownload,
+                            onInstall = onInstall,
+                        )
                     }
                 }
             }
@@ -170,6 +152,38 @@ fun AppUpdateScreen(
                     Text("更新情報を再確認")
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun UpdatePrimaryAction(
+    stage: AppUpdateStage,
+    onCheck: () -> Unit,
+    onDownload: () -> Unit,
+    onInstall: () -> Unit,
+) {
+    when (AppUpdateUiReducer.primaryActionFor(stage)) {
+        AppUpdatePrimaryAction.NONE -> Unit
+        AppUpdatePrimaryAction.CHECK -> Button(
+            onClick = onCheck,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(if (stage == AppUpdateStage.IDLE) "更新を確認" else "もう一度確認")
+        }
+
+        AppUpdatePrimaryAction.DOWNLOAD -> Button(
+            onClick = onDownload,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text("アップデートをダウンロード")
+        }
+
+        AppUpdatePrimaryAction.INSTALL -> Button(
+            onClick = onInstall,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text("インストール")
         }
     }
 }

@@ -31,6 +31,7 @@ fun KiraEnhanceApp() {
         composable(HOME_ROUTE) {
             HomeScreen(
                 onOpenModelManager = { navController.navigate(MODELS_ROUTE) },
+                onOpenSmokeTest = {},
             )
         }
         composable(MODELS_ROUTE) {

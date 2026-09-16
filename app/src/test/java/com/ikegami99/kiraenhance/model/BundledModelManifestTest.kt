@@ -29,9 +29,9 @@ class BundledModelManifestTest {
         )
 
         val param = ultraSharp.artifacts.single { it.fileName == "model.param" }
-        assertEquals(166_580L, param.fileSizeBytes)
+        assertEquals(165_579L, param.fileSizeBytes)
         assertEquals(
-            "6b34402c8c156b5b9f2b14347d65ee03391492b07f5237bf3173596b56be4e46",
+            "0332002123306541c803cd675280eee7f9cdd96f0804a47129f86ebbf9ed4174",
             param.sha256,
         )
         assertEquals(
@@ -51,6 +51,6 @@ class BundledModelManifestTest {
         )
 
         assertFalse(ultraSharp.artifacts.any { it.downloadUrl.contains("example.invalid") })
-        assertEquals(33_591_100L, ultraSharp.totalFileSizeBytes)
+        assertEquals(33_590_099L, ultraSharp.totalFileSizeBytes)
     }
 }

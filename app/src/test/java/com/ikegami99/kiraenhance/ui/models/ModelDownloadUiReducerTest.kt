@@ -7,14 +7,18 @@ import org.junit.Test
 
 class ModelDownloadUiReducerTest {
     @Test
-    fun queuedAndBlockedRemainDistinct() {
+    fun queuedBlockedAndRetryWaitRemainDistinct() {
         assertEquals(
             ModelDownloadState.QUEUED,
-            ModelDownloadUiReducer.stateFor(WorkInfo.State.ENQUEUED),
+            ModelDownloadUiReducer.stateFor(WorkInfo.State.ENQUEUED, runAttemptCount = 0),
+        )
+        assertEquals(
+            ModelDownloadState.RETRY_WAIT,
+            ModelDownloadUiReducer.stateFor(WorkInfo.State.ENQUEUED, runAttemptCount = 1),
         )
         assertEquals(
             ModelDownloadState.BLOCKED,
-            ModelDownloadUiReducer.stateFor(WorkInfo.State.BLOCKED),
+            ModelDownloadUiReducer.stateFor(WorkInfo.State.BLOCKED, runAttemptCount = 0),
         )
     }
 
@@ -27,6 +31,10 @@ class ModelDownloadUiReducerTest {
         assertEquals(
             "ネットワーク接続または実行開始を待っています",
             ModelDownloadUiReducer.waitingMessage(ModelDownloadState.QUEUED, wifiOnly = false),
+        )
+        assertEquals(
+            "ダウンロード再試行を待っています",
+            ModelDownloadUiReducer.waitingMessage(ModelDownloadState.RETRY_WAIT, wifiOnly = false),
         )
         assertEquals(
             "前提となる処理の完了を待っています",
@@ -63,6 +71,19 @@ class ModelDownloadUiReducerTest {
                 deleteLocalFiles = false,
             ),
             blocked,
+        )
+
+        val retryWait = ModelDownloadUiReducer.restartDecision(
+            previousWifiOnly = true,
+            newWifiOnly = false,
+            state = ModelDownloadState.RETRY_WAIT,
+        )
+        assertEquals(
+            ModelDownloadRestartDecision(
+                replaceExisting = true,
+                deleteLocalFiles = false,
+            ),
+            retryWait,
         )
 
         assertNull(

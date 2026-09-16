@@ -37,6 +37,8 @@ fun HomeScreen(
     onOpenModelManager: () -> Unit,
     onOpenSmokeTest: () -> Unit,
     onOpenAppUpdate: () -> Unit = {},
+    onSaveLogs: () -> Unit = {},
+    onStartEnhance: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     LazyColumn(
@@ -80,14 +82,13 @@ fun HomeScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Button(
-                        onClick = {},
-                        enabled = false,
+                        onClick = onStartEnhance,
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         Text("＋ 画像を選ぶ")
                     }
                     Text(
-                        text = "画像処理エンジンは次の実装段階で有効になります",
+                        text = "現在はUltraSharp 4xで元画像全体を処理できます",
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -151,6 +152,12 @@ fun HomeScreen(
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     Text("アプリ更新")
+                }
+                OutlinedButton(
+                    onClick = onSaveLogs,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("ログを保存")
                 }
                 OutlinedButton(
                     onClick = onOpenSmokeTest,

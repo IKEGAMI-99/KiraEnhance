@@ -21,6 +21,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
@@ -40,6 +41,7 @@ fun CompareViewer(
 
     BoxWithConstraints(
         modifier = modifier
+            .clipToBounds()
             .background(MaterialTheme.colorScheme.surfaceContainerHighest)
             .pointerInput(Unit) {
                 detectTransformGestures { _, panChange, zoomChange, _ ->
@@ -66,7 +68,8 @@ fun CompareViewer(
         Box(
             modifier = Modifier
                 .fillMaxHeight()
-                .width(maxWidth * dividerFraction),
+                .width(maxWidth * dividerFraction)
+                .clipToBounds(),
         ) {
             Image(
                 bitmap = enhanced,

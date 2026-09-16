@@ -16,6 +16,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.ikegami99.kiraenhance.diagnostics.AppDiagnosticLogger
+import com.ikegami99.kiraenhance.ui.enhance.EnhanceRoute
 import com.ikegami99.kiraenhance.ui.home.HomeScreen
 import com.ikegami99.kiraenhance.ui.models.ModelManagerScreen
 import com.ikegami99.kiraenhance.ui.models.ModelManagerViewModel
@@ -26,6 +27,7 @@ import com.ikegami99.kiraenhance.ui.update.AppUpdateViewModel
 import com.ikegami99.kiraenhance.ui.update.AppUpdateViewModelFactory
 
 private const val HOME_ROUTE = "home"
+private const val ENHANCE_ROUTE = "enhance"
 private const val MODELS_ROUTE = "models"
 private const val SMOKE_ROUTE = "smoke"
 private const val UPDATE_ROUTE = "update"
@@ -87,6 +89,13 @@ fun KiraEnhanceApp() {
                     logger.log("LogExport", "save requested")
                     logSaveLauncher.launch(logger.exportFileName())
                 },
+                onStartEnhance = { navController.navigate(ENHANCE_ROUTE) },
+            )
+        }
+        composable(ENHANCE_ROUTE) {
+            EnhanceRoute(
+                onBack = { navController.popBackStack() },
+                onOpenModelManager = { navController.navigate(MODELS_ROUTE) },
             )
         }
         composable(MODELS_ROUTE) {

@@ -90,20 +90,20 @@
       "id": "ultrasharp",
       "displayName": "4x-UltraSharp",
       "mode": "ULTRASHARP",
-      "version": "4x-candidate",
+      "version": "4x-fp16-b32be1b",
       "backend": "NCNN",
       "artifacts": [
         {
           "fileName": "model.param",
-          "downloadUrl": "https://example.invalid/models/ultrasharp/model.param",
-          "fileSizeBytes": 166000,
-          "sha256": "3333333333333333333333333333333333333333333333333333333333333333"
+          "downloadUrl": "https://huggingface.co/Kim2091/UltraSharp/resolve/b32be1b8c6f81d1f6ef8ce11f016aad3a139d1e0/NCNN/4x-UltraSharp-fp16.param",
+          "fileSizeBytes": 166580,
+          "sha256": "6b34402c8c156b5b9f2b14347d65ee03391492b07f5237bf3173596b56be4e46"
         },
         {
           "fileName": "model.bin",
-          "downloadUrl": "https://example.invalid/models/ultrasharp/model.bin",
-          "fileSizeBytes": 33400000,
-          "sha256": "3434343434343434343434343434343434343434343434343434343434343434"
+          "downloadUrl": "https://huggingface.co/Kim2091/UltraSharp/resolve/b32be1b8c6f81d1f6ef8ce11f016aad3a139d1e0/NCNN/4x-UltraSharp-fp16.bin",
+          "fileSizeBytes": 33424520,
+          "sha256": "713ce69a8642b1907cc24da7573560dcc933faf0c74e48ab0b3b379245618701"
         }
       ],
       "supportedScales": [4],
@@ -111,7 +111,7 @@
       "estimatedRamMb": 2048,
       "licenseName": "CC BY-NC-SA 4.0",
       "licenseUrl": "https://creativecommons.org/licenses/by-nc-sa/4.0/",
-      "description": "使い慣れた強めのシャープ感を狙うCommunity Modelです。非商用条件を明示して扱います。",
+      "description": "4x-UltraSharpの検証済みFP16 NCNN版です。強めのシャープ感が特徴で、CC BY-NC-SA 4.0の非商用条件を明示して扱います。",
       "community": true,
       "controls": []
     }

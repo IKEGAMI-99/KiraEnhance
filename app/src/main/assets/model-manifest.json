@@ -96,7 +96,7 @@
         {
           "fileName": "model.param",
           "downloadUrl": "https://huggingface.co/Kim2091/UltraSharp/resolve/b32be1b8c6f81d1f6ef8ce11f016aad3a139d1e0/NCNN/4x-UltraSharp-fp16.param",
-          "fileSizeBytes": 166580,
+          "fileSizeBytes": 165579,
           "sha256": "6b34402c8c156b5b9f2b14347d65ee03391492b07f5237bf3173596b56be4e46"
         },
         {

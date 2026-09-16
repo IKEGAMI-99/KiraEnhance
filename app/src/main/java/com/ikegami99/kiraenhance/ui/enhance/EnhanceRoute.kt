@@ -21,6 +21,7 @@ import com.ikegami99.kiraenhance.diagnostics.AppDiagnosticLogger
 import com.ikegami99.kiraenhance.image.EnhanceOutputNamer
 import com.ikegami99.kiraenhance.image.EnhancedImageSaver
 import com.ikegami99.kiraenhance.image.SaveResult
+import com.ikegami99.kiraenhance.inference.EngineErrorCode
 import com.ikegami99.kiraenhance.inference.ncnn.NcnnUpscaleEngine
 import com.ikegami99.kiraenhance.model.InstalledModelStore
 import com.ikegami99.kiraenhance.model.ModelDescriptor
@@ -167,7 +168,11 @@ fun EnhanceRoute(
                     is EnhanceProcessResult.Failed -> {
                         state = EnhanceUiReducer.reduce(
                             state,
-                            EnhanceEvent.Failed(result.message),
+                            if (result.code == EngineErrorCode.CANCELLED) {
+                                EnhanceEvent.Cancelled
+                            } else {
+                                EnhanceEvent.Failed(result.message)
+                            },
                         )
                         logger.log(
                             "Enhance",
@@ -199,7 +204,10 @@ fun EnhanceRoute(
                         logger.log("EnhanceSave", "success location=${result.location}")
                     }
                     is SaveResult.Failed -> {
-                        state = state.copy(status = "保存に失敗しました: ${result.message}")
+                        state = EnhanceUiReducer.reduce(
+                            state,
+                            EnhanceEvent.SaveFailed(result.message),
+                        )
                         logger.log("EnhanceSave", "failed message=${result.message}")
                     }
                 }

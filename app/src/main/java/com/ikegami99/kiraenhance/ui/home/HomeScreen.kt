@@ -36,6 +36,7 @@ private val modes = listOf(
 fun HomeScreen(
     onOpenModelManager: () -> Unit,
     onOpenSmokeTest: () -> Unit,
+    onOpenAppUpdate: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     LazyColumn(
@@ -144,6 +145,12 @@ fun HomeScreen(
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     Text("モデル管理")
+                }
+                OutlinedButton(
+                    onClick = onOpenAppUpdate,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("アプリ更新")
                 }
                 OutlinedButton(
                     onClick = onOpenSmokeTest,

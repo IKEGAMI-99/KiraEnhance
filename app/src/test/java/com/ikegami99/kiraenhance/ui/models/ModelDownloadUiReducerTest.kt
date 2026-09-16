@@ -36,4 +36,46 @@ class ModelDownloadUiReducerTest {
             ModelDownloadUiReducer.waitingMessage(ModelDownloadState.RUNNING, wifiOnly = false),
         )
     }
+
+    @Test
+    fun disablingWifiOnlyReplacesWaitingWorkAndPreservesPartialFiles() {
+        val queued = ModelDownloadUiReducer.restartDecision(
+            previousWifiOnly = true,
+            newWifiOnly = false,
+            state = ModelDownloadState.QUEUED,
+        )
+        assertEquals(
+            ModelDownloadRestartDecision(
+                replaceExisting = true,
+                deleteLocalFiles = false,
+            ),
+            queued,
+        )
+
+        val blocked = ModelDownloadUiReducer.restartDecision(
+            previousWifiOnly = true,
+            newWifiOnly = false,
+            state = ModelDownloadState.BLOCKED,
+        )
+        assertEquals(
+            ModelDownloadRestartDecision(
+                replaceExisting = true,
+                deleteLocalFiles = false,
+            ),
+            blocked,
+        )
+
+        assertNull(
+            ModelDownloadUiReducer.restartDecision(
+                previousWifiOnly = true,
+                newWifiOnly = false,
+                state = ModelDownloadState.RUNNING,
+            ),
+        )
+    }
+
+    @Test
+    fun modelManagerDefaultsWifiOnlyOff() {
+        assertEquals(false, ModelManagerUiState().wifiOnly)
+    }
 }

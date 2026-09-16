@@ -1,0 +1,384 @@
+package com.ikegami99.kiraenhance.ui.models
+
+import android.content.Context
+import androidx.lifecycle.LiveData
+import androidx.lifecycle.Observer
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+import androidx.work.WorkInfo
+import androidx.work.WorkManager
+import com.ikegami99.kiraenhance.device.DeviceCapabilities
+import com.ikegami99.kiraenhance.device.DeviceCapabilityDetector
+import com.ikegami99.kiraenhance.device.SupportTier
+import com.ikegami99.kiraenhance.download.ModelDownloadManager
+import com.ikegami99.kiraenhance.download.ModelDownloadWorker
+import com.ikegami99.kiraenhance.model.InstalledModelStore
+import com.ikegami99.kiraenhance.model.ModelDescriptor
+import com.ikegami99.kiraenhance.model.ModelManifestParser
+import java.net.URI
+import java.util.UUID
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+
+enum class ModelDownloadState {
+    IDLE,
+    QUEUED,
+    BLOCKED,
+    RUNNING,
+    SUCCEEDED,
+    FAILED,
+}
+
+internal data class ModelDownloadRestartDecision(
+    val replaceExisting: Boolean,
+    val deleteLocalFiles: Boolean,
+)
+
+internal object ModelDownloadUiReducer {
+    fun stateFor(workState: WorkInfo.State): ModelDownloadState = when (workState) {
+        WorkInfo.State.ENQUEUED -> ModelDownloadState.QUEUED
+        WorkInfo.State.BLOCKED -> ModelDownloadState.BLOCKED
+        WorkInfo.State.RUNNING -> ModelDownloadState.RUNNING
+        WorkInfo.State.SUCCEEDED -> ModelDownloadState.SUCCEEDED
+        WorkInfo.State.FAILED -> ModelDownloadState.FAILED
+        WorkInfo.State.CANCELLED -> ModelDownloadState.IDLE
+    }
+
+    fun waitingMessage(downloadState: ModelDownloadState, wifiOnly: Boolean): String? = when (downloadState) {
+        ModelDownloadState.QUEUED -> if (wifiOnly) {
+            "Wi‑Fiのみ設定のため、非従量制ネットワークを待っています"
+        } else {
+            "ネットワーク接続または実行開始を待っています"
+        }
+
+        ModelDownloadState.BLOCKED -> "前提となる処理の完了を待っています"
+        else -> null
+    }
+
+    fun restartDecision(
+        previousWifiOnly: Boolean,
+        newWifiOnly: Boolean,
+        state: ModelDownloadState,
+    ): ModelDownloadRestartDecision? =
+        if (
+            previousWifiOnly &&
+            !newWifiOnly &&
+            state in setOf(ModelDownloadState.QUEUED, ModelDownloadState.BLOCKED)
+        ) {
+            ModelDownloadRestartDecision(
+                replaceExisting = true,
+                deleteLocalFiles = false,
+            )
+        } else {
+            null
+        }
+}
+
+data class ModelCardUiState(
+    val model: ModelDescriptor,
+    val installed: Boolean,
+    val downloadState: ModelDownloadState = ModelDownloadState.IDLE,
+    val bytesDownloaded: Long = 0L,
+    val totalBytes: Long = model.totalFileSizeBytes,
+    val warningMessage: String? = null,
+    val errorMessage: String? = null,
+    val downloadAvailable: Boolean = true,
+)
+
+data class ModelManagerUiState(
+    val cards: List<ModelCardUiState> = emptyList(),
+    val deviceCapabilities: DeviceCapabilities? = null,
+    val wifiOnly: Boolean = false,
+    val errorMessage: String? = null,
+)
+
+class ModelManagerViewModel(
+    private val models: List<ModelDescriptor>,
+    private val store: InstalledModelStore,
+    private val deviceDetector: DeviceCapabilityDetector,
+    private val downloadManager: ModelDownloadManager,
+    private val workManager: WorkManager,
+    initialError: String? = null,
+) : ViewModel() {
+    private val _state = MutableStateFlow(ModelManagerUiState(errorMessage = initialError))
+    val state: StateFlow<ModelManagerUiState> = _state.asStateFlow()
+
+    private val workObservers = mutableMapOf<UUID, Pair<LiveData<WorkInfo?>, Observer<WorkInfo?>>>()
+    private val activeRequestIds = mutableMapOf<String, UUID>()
+
+    init {
+        refreshCards()
+    }
+
+    fun setWifiOnly(enabled: Boolean) {
+        val previous = _state.value
+        _state.value = previous.copy(wifiOnly = enabled)
+
+        previous.cards.forEach { card ->
+            val decision = ModelDownloadUiReducer.restartDecision(
+                previousWifiOnly = previous.wifiOnly,
+                newWifiOnly = enabled,
+                state = card.downloadState,
+            ) ?: return@forEach
+
+            check(!decision.deleteLocalFiles)
+            enqueueDownload(card.model, replaceExisting = decision.replaceExisting)
+            updateCard(card.model.id) {
+                it.copy(
+                    downloadState = ModelDownloadState.QUEUED,
+                    errorMessage = null,
+                )
+            }
+        }
+    }
+
+    fun download(modelId: String) {
+        val card = _state.value.cards.firstOrNull { it.model.id == modelId } ?: return
+        if (!card.downloadAvailable) {
+            updateCard(modelId) {
+                it.copy(errorMessage = "このモデルは配布URLの準備中です")
+            }
+            return
+        }
+        if (card.downloadState in setOf(
+                ModelDownloadState.RUNNING,
+                ModelDownloadState.QUEUED,
+                ModelDownloadState.BLOCKED,
+            )
+        ) {
+            return
+        }
+
+        val reinstalling = card.installed
+        if (reinstalling && !removeLocalModelFiles(card)) return
+
+        enqueueDownload(
+            model = card.model,
+            replaceExisting = reinstalling,
+        )
+        updateCard(modelId) {
+            it.copy(
+                installed = if (reinstalling) false else it.installed,
+                downloadState = ModelDownloadState.QUEUED,
+                bytesDownloaded = 0L,
+                totalBytes = card.model.totalFileSizeBytes,
+                errorMessage = null,
+            )
+        }
+    }
+
+    fun delete(modelId: String) {
+        val card = _state.value.cards.firstOrNull { it.model.id == modelId } ?: return
+        activeRequestIds.remove(modelId)?.let(::removeObserver)
+        workManager.cancelUniqueWork(ModelDownloadManager.workName(card.model))
+        if (!removeLocalModelFiles(card)) return
+
+        updateCard(modelId) {
+            it.copy(
+                installed = false,
+                downloadState = ModelDownloadState.IDLE,
+                bytesDownloaded = 0L,
+                errorMessage = null,
+            )
+        }
+    }
+
+    fun reinstall(modelId: String) {
+        download(modelId)
+    }
+
+    private fun enqueueDownload(model: ModelDescriptor, replaceExisting: Boolean): UUID {
+        val requestId = downloadManager.enqueue(
+            model = model,
+            wifiOnly = _state.value.wifiOnly,
+            replaceExisting = replaceExisting,
+        )
+        activeRequestIds.put(model.id, requestId)?.let(::removeObserver)
+        observeDownload(model, requestId)
+        return requestId
+    }
+
+    private fun removeLocalModelFiles(card: ModelCardUiState): Boolean = runCatching {
+        check(store.deleteModel(card.model)) { "モデルファイルを削除できませんでした" }
+    }.fold(
+        onSuccess = { true },
+        onFailure = { error ->
+            updateCard(card.model.id) {
+                it.copy(errorMessage = error.message ?: "モデルの削除に失敗しました")
+            }
+            false
+        },
+    )
+
+    private fun refreshCards() {
+        val capabilitiesResult = runCatching { deviceDetector.detect() }
+        val capabilities = capabilitiesResult.getOrNull()
+        val warning = warningFor(capabilities)
+        val detectorError = capabilitiesResult.exceptionOrNull()?.let {
+            "端末性能の判定に失敗しました: ${it.message ?: "unknown error"}"
+        }
+
+        _state.value = _state.value.copy(
+            deviceCapabilities = capabilities,
+            errorMessage = _state.value.errorMessage ?: detectorError,
+            cards = models.map { model ->
+                ModelCardUiState(
+                    model = model,
+                    installed = store.isInstalled(model),
+                    warningMessage = warning,
+                    downloadAvailable = model.artifacts.all { artifact ->
+                        hasProductionDownloadUrl(artifact.downloadUrl)
+                    },
+                )
+            },
+        )
+    }
+
+    private fun observeDownload(model: ModelDescriptor, requestId: UUID) {
+        val liveData = workManager.getWorkInfoByIdLiveData(requestId)
+        val observer = Observer<WorkInfo?> { info ->
+            if (info == null || activeRequestIds[model.id] != requestId) return@Observer
+
+            val downloaded = info.progress.getLong(ModelDownloadWorker.KEY_BYTES_DOWNLOADED, 0L)
+            val total = info.progress.getLong(ModelDownloadWorker.KEY_TOTAL_BYTES, model.totalFileSizeBytes)
+                .takeIf { it > 0L }
+                ?: model.totalFileSizeBytes
+
+            when (info.state) {
+                WorkInfo.State.ENQUEUED -> updateCard(model.id) {
+                    it.copy(
+                        downloadState = ModelDownloadState.QUEUED,
+                        bytesDownloaded = downloaded,
+                        totalBytes = total,
+                    )
+                }
+
+                WorkInfo.State.BLOCKED -> updateCard(model.id) {
+                    it.copy(
+                        downloadState = ModelDownloadState.BLOCKED,
+                        bytesDownloaded = downloaded,
+                        totalBytes = total,
+                    )
+                }
+
+                WorkInfo.State.RUNNING -> updateCard(model.id) {
+                    it.copy(
+                        downloadState = ModelDownloadState.RUNNING,
+                        bytesDownloaded = downloaded,
+                        totalBytes = total,
+                        errorMessage = null,
+                    )
+                }
+
+                WorkInfo.State.SUCCEEDED -> {
+                    updateCard(model.id) {
+                        it.copy(
+                            installed = store.isInstalled(model),
+                            downloadState = ModelDownloadState.SUCCEEDED,
+                            bytesDownloaded = model.totalFileSizeBytes,
+                            totalBytes = model.totalFileSizeBytes,
+                            errorMessage = null,
+                        )
+                    }
+                    finishObservation(model.id, requestId)
+                }
+
+                WorkInfo.State.FAILED -> {
+                    updateCard(model.id) {
+                        it.copy(
+                            installed = store.isInstalled(model),
+                            downloadState = ModelDownloadState.FAILED,
+                            errorMessage = info.outputData.getString(ModelDownloadWorker.KEY_ERROR)
+                                ?: "モデルのダウンロードに失敗しました",
+                        )
+                    }
+                    finishObservation(model.id, requestId)
+                }
+
+                WorkInfo.State.CANCELLED -> {
+                    updateCard(model.id) {
+                        it.copy(
+                            installed = store.isInstalled(model),
+                            downloadState = ModelDownloadState.IDLE,
+                            bytesDownloaded = 0L,
+                        )
+                    }
+                    finishObservation(model.id, requestId)
+                }
+            }
+        }
+        workObservers[requestId] = liveData to observer
+        liveData.observeForever(observer)
+    }
+
+    private fun finishObservation(modelId: String, requestId: UUID) {
+        activeRequestIds.remove(modelId, requestId)
+        removeObserver(requestId)
+    }
+
+    private fun removeObserver(requestId: UUID) {
+        workObservers.remove(requestId)?.let { (liveData, observer) ->
+            liveData.removeObserver(observer)
+        }
+    }
+
+    private fun updateCard(modelId: String, transform: (ModelCardUiState) -> ModelCardUiState) {
+        _state.value = _state.value.copy(
+            cards = _state.value.cards.map { card ->
+                if (card.model.id == modelId) transform(card) else card
+            },
+        )
+    }
+
+    override fun onCleared() {
+        workObservers.values.forEach { (liveData, observer) ->
+            liveData.removeObserver(observer)
+        }
+        workObservers.clear()
+        activeRequestIds.clear()
+        super.onCleared()
+    }
+
+    private fun warningFor(capabilities: DeviceCapabilities?): String? = when (capabilities?.supportTier) {
+        SupportTier.NOT_RECOMMENDED -> "この端末では処理が重くなる可能性があります"
+        SupportTier.UNSUPPORTED -> "この端末はv1の最低要件（64bit / Vulkan 1.2）を満たしていません"
+        else -> null
+    }
+
+    private fun hasProductionDownloadUrl(url: String): Boolean = runCatching {
+        val host = URI(url).host?.lowercase() ?: return@runCatching false
+        host != "example.invalid" && !host.endsWith(".invalid")
+    }.getOrDefault(false)
+}
+
+class ModelManagerViewModelFactory(
+    context: Context,
+) : ViewModelProvider.Factory {
+    private val appContext = context.applicationContext
+
+    override fun <T : ViewModel> create(modelClass: Class<T>): T {
+        require(modelClass.isAssignableFrom(ModelManagerViewModel::class.java)) {
+            "Unsupported ViewModel class: ${modelClass.name}"
+        }
+
+        var initialError: String? = null
+        val models = runCatching {
+            val json = appContext.assets.open("model-manifest.json").bufferedReader().use { it.readText() }
+            ModelManifestParser().parse(json).models
+        }.getOrElse { error ->
+            initialError = "モデル一覧の読み込みに失敗しました: ${error.message ?: "unknown error"}"
+            emptyList()
+        }
+
+        @Suppress("UNCHECKED_CAST")
+        return ModelManagerViewModel(
+            models = models,
+            store = InstalledModelStore(appContext),
+            deviceDetector = DeviceCapabilityDetector(appContext),
+            downloadManager = ModelDownloadManager(appContext),
+            workManager = WorkManager.getInstance(appContext),
+            initialError = initialError,
+        ) as T
+    }
+}

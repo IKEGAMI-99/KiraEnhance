@@ -1,0 +1,120 @@
+{
+  "schemaVersion": 1,
+  "notes": "Example metadata only. KiraEnhance does not redistribute model binaries from this file; production URLs and licenses must be verified before release.",
+  "models": [
+    {
+      "id": "realesrgan-anime",
+      "displayName": "Kira Fidelity",
+      "mode": "FIDELITY",
+      "version": "candidate-1",
+      "backend": "NCNN",
+      "artifacts": [
+        {
+          "fileName": "model.param",
+          "downloadUrl": "https://example.invalid/models/realesrgan-anime/model.param",
+          "fileSizeBytes": 10000,
+          "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "fileName": "model.bin",
+          "downloadUrl": "https://example.invalid/models/realesrgan-anime/model.bin",
+          "fileSizeBytes": 1000000,
+          "sha256": "0101010101010101010101010101010101010101010101010101010101010101"
+        }
+      ],
+      "supportedScales": [2, 4],
+      "minAppVersion": "0.1.0-alpha01",
+      "estimatedRamMb": 2048,
+      "licenseName": "VERIFY-BEFORE-DISTRIBUTION",
+      "licenseUrl": "https://example.invalid/licenses/realesrgan-anime",
+      "description": "Fast fidelity-oriented anime/3D game upscaler candidate.",
+      "community": false,
+      "controls": []
+    },
+    {
+      "id": "pisa-sr",
+      "displayName": "Kira Balance",
+      "mode": "BALANCED",
+      "version": "candidate-1",
+      "backend": "MNN",
+      "artifacts": [
+        {
+          "fileName": "model.mnn",
+          "downloadUrl": "https://example.invalid/models/pisa-sr/model.mnn",
+          "fileSizeBytes": 2000000,
+          "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+        }
+      ],
+      "supportedScales": [2, 4],
+      "minAppVersion": "0.1.0-alpha01",
+      "estimatedRamMb": 8000,
+      "licenseName": "Apache-2.0-target-project-license",
+      "licenseUrl": "https://example.invalid/licenses/pisa-sr",
+      "description": "Required balanced PiSA-SR target. Final converted weights and all upstream dependencies require verification before distribution.",
+      "community": false,
+      "controls": [
+        {
+          "id": "fidelity",
+          "label": "忠実度",
+          "type": "SLIDER",
+          "min": 0.0,
+          "max": 1.0,
+          "defaultValue": 0.65,
+          "choices": []
+        }
+      ]
+    },
+    {
+      "id": "hat-s",
+      "displayName": "Kira Detail",
+      "mode": "DETAIL",
+      "version": "candidate-1",
+      "backend": "MNN",
+      "artifacts": [
+        {
+          "fileName": "model.mnn",
+          "downloadUrl": "https://example.invalid/models/hat-s/model.mnn",
+          "fileSizeBytes": 3000000,
+          "sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+        }
+      ],
+      "supportedScales": [4],
+      "minAppVersion": "0.1.0-alpha01",
+      "estimatedRamMb": 4096,
+      "licenseName": "VERIFY-BEFORE-DISTRIBUTION",
+      "licenseUrl": "https://example.invalid/licenses/hat-s",
+      "description": "Detail-oriented HAT-S candidate for fine clothing and hair texture.",
+      "community": false,
+      "controls": []
+    },
+    {
+      "id": "ultrasharp",
+      "displayName": "UltraSharp",
+      "mode": "ULTRASHARP",
+      "version": "4x-candidate",
+      "backend": "NCNN",
+      "artifacts": [
+        {
+          "fileName": "model.param",
+          "downloadUrl": "https://example.invalid/models/ultrasharp/model.param",
+          "fileSizeBytes": 166000,
+          "sha256": "3333333333333333333333333333333333333333333333333333333333333333"
+        },
+        {
+          "fileName": "model.bin",
+          "downloadUrl": "https://example.invalid/models/ultrasharp/model.bin",
+          "fileSizeBytes": 33400000,
+          "sha256": "3434343434343434343434343434343434343434343434343434343434343434"
+        }
+      ],
+      "supportedScales": [4],
+      "minAppVersion": "0.1.0-alpha01",
+      "estimatedRamMb": 2048,
+      "licenseName": "CC BY-NC-SA 4.0",
+      "licenseUrl": "https://creativecommons.org/licenses/by-nc-sa/4.0/",
+      "description": "Optional community model. Treat as non-commercial unless licensing changes are verified.",
+      "community": true,
+      "controls": []
+    }
+  ]
+}

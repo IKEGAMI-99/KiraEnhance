@@ -363,6 +363,7 @@ private fun ModelCard(
 
             if (card.downloadState in setOf(
                     ModelDownloadState.QUEUED,
+                    ModelDownloadState.RETRY_WAIT,
                     ModelDownloadState.BLOCKED,
                     ModelDownloadState.RUNNING,
                 )
@@ -404,6 +405,7 @@ private fun ModelCard(
 
             val downloadBusy = card.downloadState in setOf(
                 ModelDownloadState.QUEUED,
+                ModelDownloadState.RETRY_WAIT,
                 ModelDownloadState.BLOCKED,
                 ModelDownloadState.RUNNING,
             )

@@ -46,6 +46,44 @@ class ModelManagerScreenTest {
         composeRule.onNodeWithText("この端末では処理が重くなる可能性があります").assertIsDisplayed()
     }
 
+    @Test
+    fun explainsQueuedWifiOnlyAndBlockedWaits() {
+        composeRule.setContent {
+            KiraEnhanceTheme {
+                ModelManagerScreen(
+                    state = ModelManagerUiState(
+                        cards = listOf(
+                            card(
+                                id = "ultrasharp",
+                                mode = EnhancementMode.ULTRASHARP,
+                                community = true,
+                                downloadState = ModelDownloadState.QUEUED,
+                            ),
+                            card(
+                                id = "pisa-sr",
+                                mode = EnhancementMode.BALANCED,
+                                downloadState = ModelDownloadState.BLOCKED,
+                            ),
+                        ),
+                        wifiOnly = true,
+                    ),
+                    onBack = {},
+                    onDownload = {},
+                    onDelete = {},
+                    onWifiOnlyChanged = {},
+                    onOpenLicense = {},
+                )
+            }
+        }
+
+        composeRule.onNodeWithText(
+            "Wi‑Fiのみ設定のため、非従量制ネットワークを待っています",
+        ).assertIsDisplayed()
+        composeRule.onNodeWithText(
+            "前提となる処理の完了を待っています",
+        ).assertIsDisplayed()
+    }
+
     private fun fakeState(): ModelManagerUiState = ModelManagerUiState(
         cards = listOf(
             card("realesrgan-anime", EnhancementMode.FIDELITY, installed = true),
@@ -69,6 +107,7 @@ class ModelManagerScreenTest {
         mode: EnhancementMode,
         installed: Boolean = false,
         community: Boolean = false,
+        downloadState: ModelDownloadState = ModelDownloadState.IDLE,
     ): ModelCardUiState = ModelCardUiState(
         model = ModelDescriptor(
             id = id,
@@ -106,6 +145,7 @@ class ModelManagerScreenTest {
             community = community,
         ),
         installed = installed,
+        downloadState = downloadState,
         warningMessage = "この端末では処理が重くなる可能性があります",
     )
 }

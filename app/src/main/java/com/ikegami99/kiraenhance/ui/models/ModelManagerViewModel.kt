@@ -24,9 +24,32 @@ import kotlinx.coroutines.flow.asStateFlow
 enum class ModelDownloadState {
     IDLE,
     QUEUED,
+    BLOCKED,
     RUNNING,
     SUCCEEDED,
     FAILED,
+}
+
+internal object ModelDownloadUiReducer {
+    fun stateFor(workState: WorkInfo.State): ModelDownloadState = when (workState) {
+        WorkInfo.State.ENQUEUED -> ModelDownloadState.QUEUED
+        WorkInfo.State.BLOCKED -> ModelDownloadState.BLOCKED
+        WorkInfo.State.RUNNING -> ModelDownloadState.RUNNING
+        WorkInfo.State.SUCCEEDED -> ModelDownloadState.SUCCEEDED
+        WorkInfo.State.FAILED -> ModelDownloadState.FAILED
+        WorkInfo.State.CANCELLED -> ModelDownloadState.IDLE
+    }
+
+    fun waitingMessage(downloadState: ModelDownloadState, wifiOnly: Boolean): String? = when (downloadState) {
+        ModelDownloadState.QUEUED -> if (wifiOnly) {
+            "Wi‑Fiのみ設定のため、非従量制ネットワークを待っています"
+        } else {
+            "ネットワーク接続または実行開始を待っています"
+        }
+
+        ModelDownloadState.BLOCKED -> "前提となる処理の完了を待っています"
+        else -> null
+    }
 }
 
 data class ModelCardUiState(
@@ -166,11 +189,17 @@ class ModelManagerViewModel(
                 ?: model.totalFileSizeBytes
 
             when (info.state) {
-                WorkInfo.State.ENQUEUED,
-                WorkInfo.State.BLOCKED,
-                -> updateCard(model.id) {
+                WorkInfo.State.ENQUEUED -> updateCard(model.id) {
                     it.copy(
                         downloadState = ModelDownloadState.QUEUED,
+                        bytesDownloaded = downloaded,
+                        totalBytes = total,
+                    )
+                }
+
+                WorkInfo.State.BLOCKED -> updateCard(model.id) {
+                    it.copy(
+                        downloadState = ModelDownloadState.BLOCKED,
                         bytesDownloaded = downloaded,
                         totalBytes = total,
                     )

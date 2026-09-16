@@ -21,10 +21,36 @@ class AppDiagnosticLogger private constructor(
         }
     }
 
-    fun exportTo(uri: Uri): Result<Unit> = runCatching {
-        val output = appContext.contentResolver.openOutputStream(uri, "w")
+    fun exportTo(uri: Uri): Result<Long> = runCatching {
+        val resolver = appContext.contentResolver
+        val writtenBytes = resolver.openOutputStream(uri, "w")
+            ?.use { output ->
+                val count = store.copyTo(output)
+                output.flush()
+                count
+            }
             ?: error("保存先を開けませんでした")
-        output.use { store.copyTo(it) }
+
+        check(writtenBytes > 0L) { "保存するログが0バイトです" }
+
+        val verifiedBytes = resolver.openInputStream(uri)
+            ?.use { input ->
+                val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                var total = 0L
+                while (true) {
+                    val read = input.read(buffer)
+                    if (read < 0) break
+                    total += read
+                }
+                total
+            }
+            ?: error("保存したログを再読込できませんでした")
+
+        check(verifiedBytes == writtenBytes) {
+            "保存後のログ検証に失敗しました: wrote=$writtenBytes read=$verifiedBytes"
+        }
+        check(verifiedBytes > 0L) { "保存したログが0バイトです" }
+        verifiedBytes
     }
 
     fun exportFileName(): String = DiagnosticLogStore.exportFileName()

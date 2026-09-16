@@ -11,14 +11,16 @@ class HomeScreenTest {
     val composeRule = createComposeRule()
 
     @Test
-    fun showsUltraSharpSmokeTestEntry() {
+    fun showsUltraSharpSmokeTestEntryAndLogSaveAction() {
         composeRule.setContent {
             HomeScreen(
                 onOpenModelManager = {},
                 onOpenSmokeTest = {},
+                onSaveLogs = {},
             )
         }
 
         composeRule.onNodeWithText("UltraSharp 実機テスト").assertIsDisplayed()
+        composeRule.onNodeWithText("ログを保存").assertIsDisplayed()
     }
 }

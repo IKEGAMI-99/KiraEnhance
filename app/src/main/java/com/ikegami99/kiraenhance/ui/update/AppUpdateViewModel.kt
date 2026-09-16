@@ -8,7 +8,6 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
-import com.ikegami99.kiraenhance.BuildConfig
 import com.ikegami99.kiraenhance.update.AndroidAppUpdateInstallPlatform
 import com.ikegami99.kiraenhance.update.AppUpdateCheckResult
 import com.ikegami99.kiraenhance.update.AppUpdateDownloadManager
@@ -272,14 +271,16 @@ class AppUpdateViewModelFactory(
             "Unsupported ViewModel class: ${modelClass.name}"
         }
 
+        val packageInfo = appContext.packageManager.getPackageInfo(appContext.packageName, 0)
+
         @Suppress("UNCHECKED_CAST")
         return AppUpdateViewModel(
             checker = AppUpdateChecker(HttpUpdateManifestSource()),
             downloadManager = AppUpdateDownloadManager(appContext),
             workManager = WorkManager.getInstance(appContext),
             installer = AppUpdateInstaller(AndroidAppUpdateInstallPlatform(appContext)),
-            currentVersionCode = BuildConfig.VERSION_CODE,
-            currentVersionName = BuildConfig.VERSION_NAME,
+            currentVersionCode = packageInfo.longVersionCode.toInt(),
+            currentVersionName = packageInfo.versionName ?: "unknown",
         ) as T
     }
 }

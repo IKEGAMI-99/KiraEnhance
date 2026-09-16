@@ -3,7 +3,7 @@ name: Release Android
 on:
   push:
     branches:
-      - 'feat/ncnn-inference'
+      - 'feat/**'
     paths:
       - '.github/workflows/release.yml'
   workflow_dispatch:

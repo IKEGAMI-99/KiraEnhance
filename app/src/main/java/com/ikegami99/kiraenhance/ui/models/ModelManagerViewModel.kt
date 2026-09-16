@@ -30,6 +30,11 @@ enum class ModelDownloadState {
     FAILED,
 }
 
+internal data class ModelDownloadRestartDecision(
+    val replaceExisting: Boolean,
+    val deleteLocalFiles: Boolean,
+)
+
 internal object ModelDownloadUiReducer {
     fun stateFor(workState: WorkInfo.State): ModelDownloadState = when (workState) {
         WorkInfo.State.ENQUEUED -> ModelDownloadState.QUEUED
@@ -50,6 +55,24 @@ internal object ModelDownloadUiReducer {
         ModelDownloadState.BLOCKED -> "前提となる処理の完了を待っています"
         else -> null
     }
+
+    fun restartDecision(
+        previousWifiOnly: Boolean,
+        newWifiOnly: Boolean,
+        state: ModelDownloadState,
+    ): ModelDownloadRestartDecision? =
+        if (
+            previousWifiOnly &&
+            !newWifiOnly &&
+            state in setOf(ModelDownloadState.QUEUED, ModelDownloadState.BLOCKED)
+        ) {
+            ModelDownloadRestartDecision(
+                replaceExisting = true,
+                deleteLocalFiles = false,
+            )
+        } else {
+            null
+        }
 }
 
 data class ModelCardUiState(
@@ -66,7 +89,7 @@ data class ModelCardUiState(
 data class ModelManagerUiState(
     val cards: List<ModelCardUiState> = emptyList(),
     val deviceCapabilities: DeviceCapabilities? = null,
-    val wifiOnly: Boolean = true,
+    val wifiOnly: Boolean = false,
     val errorMessage: String? = null,
 )
 
@@ -82,13 +105,32 @@ class ModelManagerViewModel(
     val state: StateFlow<ModelManagerUiState> = _state.asStateFlow()
 
     private val workObservers = mutableMapOf<UUID, Pair<LiveData<WorkInfo?>, Observer<WorkInfo?>>>()
+    private val activeRequestIds = mutableMapOf<String, UUID>()
 
     init {
         refreshCards()
     }
 
     fun setWifiOnly(enabled: Boolean) {
-        _state.value = _state.value.copy(wifiOnly = enabled)
+        val previous = _state.value
+        _state.value = previous.copy(wifiOnly = enabled)
+
+        previous.cards.forEach { card ->
+            val decision = ModelDownloadUiReducer.restartDecision(
+                previousWifiOnly = previous.wifiOnly,
+                newWifiOnly = enabled,
+                state = card.downloadState,
+            ) ?: return@forEach
+
+            check(!decision.deleteLocalFiles)
+            enqueueDownload(card.model, replaceExisting = decision.replaceExisting)
+            updateCard(card.model.id) {
+                it.copy(
+                    downloadState = ModelDownloadState.QUEUED,
+                    errorMessage = null,
+                )
+            }
+        }
     }
 
     fun download(modelId: String) {
@@ -99,16 +141,20 @@ class ModelManagerViewModel(
             }
             return
         }
-        if (card.downloadState == ModelDownloadState.RUNNING || card.downloadState == ModelDownloadState.QUEUED) {
+        if (card.downloadState in setOf(
+                ModelDownloadState.RUNNING,
+                ModelDownloadState.QUEUED,
+                ModelDownloadState.BLOCKED,
+            )
+        ) {
             return
         }
 
         val reinstalling = card.installed
         if (reinstalling && !removeLocalModelFiles(card)) return
 
-        val requestId = downloadManager.enqueue(
+        enqueueDownload(
             model = card.model,
-            wifiOnly = _state.value.wifiOnly,
             replaceExisting = reinstalling,
         )
         updateCard(modelId) {
@@ -120,11 +166,11 @@ class ModelManagerViewModel(
                 errorMessage = null,
             )
         }
-        observeDownload(card.model, requestId)
     }
 
     fun delete(modelId: String) {
         val card = _state.value.cards.firstOrNull { it.model.id == modelId } ?: return
+        activeRequestIds.remove(modelId)?.let(::removeObserver)
         workManager.cancelUniqueWork(ModelDownloadManager.workName(card.model))
         if (!removeLocalModelFiles(card)) return
 
@@ -140,6 +186,17 @@ class ModelManagerViewModel(
 
     fun reinstall(modelId: String) {
         download(modelId)
+    }
+
+    private fun enqueueDownload(model: ModelDescriptor, replaceExisting: Boolean): UUID {
+        val requestId = downloadManager.enqueue(
+            model = model,
+            wifiOnly = _state.value.wifiOnly,
+            replaceExisting = replaceExisting,
+        )
+        activeRequestIds.put(model.id, requestId)?.let(::removeObserver)
+        observeDownload(model, requestId)
+        return requestId
     }
 
     private fun removeLocalModelFiles(card: ModelCardUiState): Boolean = runCatching {
@@ -181,7 +238,7 @@ class ModelManagerViewModel(
     private fun observeDownload(model: ModelDescriptor, requestId: UUID) {
         val liveData = workManager.getWorkInfoByIdLiveData(requestId)
         val observer = Observer<WorkInfo?> { info ->
-            if (info == null) return@Observer
+            if (info == null || activeRequestIds[model.id] != requestId) return@Observer
 
             val downloaded = info.progress.getLong(ModelDownloadWorker.KEY_BYTES_DOWNLOADED, 0L)
             val total = info.progress.getLong(ModelDownloadWorker.KEY_TOTAL_BYTES, model.totalFileSizeBytes)
@@ -224,7 +281,7 @@ class ModelManagerViewModel(
                             errorMessage = null,
                         )
                     }
-                    removeObserver(requestId)
+                    finishObservation(model.id, requestId)
                 }
 
                 WorkInfo.State.FAILED -> {
@@ -236,7 +293,7 @@ class ModelManagerViewModel(
                                 ?: "モデルのダウンロードに失敗しました",
                         )
                     }
-                    removeObserver(requestId)
+                    finishObservation(model.id, requestId)
                 }
 
                 WorkInfo.State.CANCELLED -> {
@@ -247,12 +304,17 @@ class ModelManagerViewModel(
                             bytesDownloaded = 0L,
                         )
                     }
-                    removeObserver(requestId)
+                    finishObservation(model.id, requestId)
                 }
             }
         }
         workObservers[requestId] = liveData to observer
         liveData.observeForever(observer)
+    }
+
+    private fun finishObservation(modelId: String, requestId: UUID) {
+        activeRequestIds.remove(modelId, requestId)
+        removeObserver(requestId)
     }
 
     private fun removeObserver(requestId: UUID) {
@@ -274,6 +336,7 @@ class ModelManagerViewModel(
             liveData.removeObserver(observer)
         }
         workObservers.clear()
+        activeRequestIds.clear()
         super.onCleared()
     }
 

@@ -48,6 +48,39 @@ jobs:
             exit 1
           }
 
+      - name: Enforce increasing versionCode
+        shell: bash
+        run: |
+          set -euo pipefail
+          LATEST_MANIFEST="$RUNNER_TEMP/latest-update-manifest.json"
+          LATEST_URL="https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/update-manifest.json"
+          HTTP_STATUS="$(curl -sS -L --retry 2 -o "$LATEST_MANIFEST" -w '%{http_code}' "$LATEST_URL")"
+
+          case "$HTTP_STATUS" in
+            200)
+              export LATEST_MANIFEST
+              python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          manifest = json.loads(Path(os.environ["LATEST_MANIFEST"]).read_text(encoding="utf-8"))
+          previous = int(manifest["versionCode"])
+          new = int(os.environ["KIRAENHANCE_VERSION_CODE"])
+          if new <= previous:
+              raise SystemExit(f"versionCode must increase: latest={previous}, requested={new}")
+          print(f"versionCode OK: {previous} -> {new}")
+          PY
+              ;;
+            404)
+              echo "No existing update manifest; treating this as the first signed release."
+              ;;
+            *)
+              echo "Could not verify the latest update manifest (HTTP $HTTP_STATUS). Refusing to publish." >&2
+              exit 1
+              ;;
+          esac
+
       - name: Set up JDK 17
         uses: actions/setup-java@v5
         with:
@@ -197,6 +230,6 @@ jobs:
         with:
           name: kiraenhance-release-${{ inputs.version_name }}
           path: |
-            ${{ env.SIGNED_APK }}
-            ${{ env.DIST_DIR }}/update-manifest.json
+            ${{ runner.temp }}/kiraenhance-dist/KiraEnhance-${{ inputs.version_name }}.apk
+            ${{ runner.temp }}/kiraenhance-dist/update-manifest.json
           retention-days: 30

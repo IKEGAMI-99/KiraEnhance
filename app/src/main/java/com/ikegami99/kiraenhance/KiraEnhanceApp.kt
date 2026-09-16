@@ -44,9 +44,16 @@ fun KiraEnhanceApp() {
             logger.log("LogExport", "save cancelled")
         } else {
             logger.exportTo(uri).fold(
-                onSuccess = {
-                    logger.log("LogExport", "save complete scheme=${uri.scheme ?: "unknown"}")
-                    Toast.makeText(context, "ログを保存しました", Toast.LENGTH_SHORT).show()
+                onSuccess = { verifiedBytes ->
+                    logger.log(
+                        "LogExport",
+                        "save complete bytes=$verifiedBytes scheme=${uri.scheme ?: "unknown"}",
+                    )
+                    Toast.makeText(
+                        context,
+                        "ログを保存しました (${verifiedBytes} bytes)",
+                        Toast.LENGTH_SHORT,
+                    ).show()
                 },
                 onFailure = { error ->
                     logger.log(

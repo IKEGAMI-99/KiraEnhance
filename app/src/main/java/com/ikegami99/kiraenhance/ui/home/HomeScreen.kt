@@ -35,6 +35,7 @@ private val modes = listOf(
 @Composable
 fun HomeScreen(
     onOpenModelManager: () -> Unit,
+    onOpenSmokeTest: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     LazyColumn(
@@ -137,11 +138,19 @@ fun HomeScreen(
         }
 
         item {
-            OutlinedButton(
-                onClick = onOpenModelManager,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text("モデル管理")
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedButton(
+                    onClick = onOpenModelManager,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("モデル管理")
+                }
+                OutlinedButton(
+                    onClick = onOpenSmokeTest,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("UltraSharp 実機テスト")
+                }
             }
         }
     }

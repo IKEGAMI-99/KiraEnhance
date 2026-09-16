@@ -4,7 +4,7 @@
 
 **Goal:** Let KiraEnhance manually check GitHub Releases, download and verify a stable-signed APK, and hand it to Android's system package installer from inside the app.
 
-**Architecture:** GitHub Releases hosts a stable `update-manifest.json` plus the signed APK and checksum. The app uses a small manifest parser/checker, a WorkManager download worker, a narrow `FileProvider`, and a dedicated Compose update screen. Release signing is handled only by GitHub Actions secrets; development debug APKs remain unchanged.
+**Architecture:** GitHub Releases hosts `update-manifest.json`, the signed APK, and its checksum. The app uses a small manifest parser/checker, a WorkManager APK downloader with SHA-256 verification, a narrow FileProvider, and a dedicated Compose update screen. Release signing exists only in GitHub Actions secrets; debug CI remains unsigned with the normal debug key.
 
 **Tech Stack:** Kotlin, OkHttp 5.3.2, Moshi 1.15.2, WorkManager 2.11.2, Android FileProvider/package installer intents, Compose Material 3, GitHub Actions, JUnit 4.
 
@@ -15,16 +15,16 @@
 - Android `minSdk = 28`, `targetSdk = 36`.
 - Update checks are manual only.
 - Update source of truth is GitHub Releases.
-- The stable manifest URL is `https://github.com/IKEGAMI-99/KiraEnhance/releases/latest/download/update-manifest.json`.
+- Manifest URL is `https://github.com/IKEGAMI-99/KiraEnhance/releases/latest/download/update-manifest.json`.
 - Manifest fields are `versionName`, `versionCode`, `releaseNotes`, `apkUrl`, and `apkSha256`.
-- APKs must keep application ID `com.ikegami99.kiraenhance` and one stable release signing certificate.
-- Never silently install; Android's system installer confirmation is mandatory.
+- APKs keep application ID `com.ikegami99.kiraenhance` and one stable release signing certificate.
+- Android's system installer confirmation remains mandatory.
 - A checksum mismatch deletes the APK and never enables Install.
-- Required GitHub Secrets: `KIRA_RELEASE_KEYSTORE_B64`, `KIRA_RELEASE_STORE_PASSWORD`, `KIRA_RELEASE_KEY_ALIAS`, `KIRA_RELEASE_KEY_PASSWORD`.
+- Required GitHub Secrets are `KIRA_RELEASE_KEYSTORE_B64`, `KIRA_RELEASE_STORE_PASSWORD`, `KIRA_RELEASE_KEY_ALIAS`, and `KIRA_RELEASE_KEY_PASSWORD`.
 
 ---
 
-### Task 1: Define and validate update metadata
+### Task 1: Define, parse, and compare update metadata
 
 **Files:**
 - Create: `app/src/main/java/com/ikegami99/kiraenhance/update/AppUpdateInfo.kt`
@@ -34,13 +34,12 @@
 - Create: `app/src/test/java/com/ikegami99/kiraenhance/update/AppUpdateCheckerTest.kt`
 
 **Interfaces:**
-- Produces: `data class AppUpdateInfo(versionName: String, versionCode: Int, releaseNotes: String, apkUrl: String, apkSha256: String)`
-- Produces: `fun interface UpdateManifestSource { fun load(): String }`
-- Produces: `class HttpUpdateManifestSource(client: OkHttpClient, manifestUrl: String = DEFAULT_UPDATE_MANIFEST_URL)`
-- Produces: `sealed interface AppUpdateCheckResult { data class Available(...); data class UpToDate(...) }`
-- Produces: `AppUpdateChecker.check(currentVersionCode: Int): AppUpdateCheckResult`
+- Produces: `AppUpdateInfo(versionName: String, versionCode: Int, releaseNotes: String, apkUrl: String, apkSha256: String)`.
+- Produces: `UpdateManifestSource.load(): String`.
+- Produces: `AppUpdateCheckResult.Available(info: AppUpdateInfo)` and `AppUpdateCheckResult.UpToDate(latestVersionName: String)`.
+- Produces: `AppUpdateChecker.check(currentVersionCode: Int): AppUpdateCheckResult`.
 
-- [ ] **Step 1: Write failing parser tests**
+- [ ] **Step 1: Write failing parser and comparison tests**
 
 ```kotlin
 package com.ikegami99.kiraenhance.update
@@ -65,7 +64,6 @@ class AppUpdateManifestParserTest {
             }
             """.trimIndent(),
         )
-
         assertEquals("0.1.0-alpha02", info.versionName)
         assertEquals(2, info.versionCode)
         assertEquals("a".repeat(64), info.apkSha256)
@@ -90,8 +88,6 @@ class AppUpdateManifestParserTest {
 }
 ```
 
-- [ ] **Step 2: Write failing version comparison tests**
-
 ```kotlin
 package com.ikegami99.kiraenhance.update
 
@@ -110,14 +106,14 @@ class AppUpdateCheckerTest {
     """.trimIndent()
 
     @Test
-    fun reportsAvailableWhenRemoteVersionCodeIsHigher() {
+    fun higherVersionCodeIsAvailable() {
         val checker = AppUpdateChecker(UpdateManifestSource { newerJson })
         val result = checker.check(currentVersionCode = 1)
         assertEquals(2, (result as AppUpdateCheckResult.Available).info.versionCode)
     }
 
     @Test
-    fun reportsUpToDateWhenVersionCodeMatches() {
+    fun sameVersionCodeIsUpToDate() {
         val checker = AppUpdateChecker(UpdateManifestSource { newerJson })
         val result = checker.check(currentVersionCode = 2)
         assertEquals("0.1.0-alpha02", (result as AppUpdateCheckResult.UpToDate).latestVersionName)
@@ -125,15 +121,15 @@ class AppUpdateCheckerTest {
 }
 ```
 
-- [ ] **Step 3: Run tests and verify RED**
+- [ ] **Step 2: Run tests and verify RED**
 
 ```bash
-gradle :app:testDebugUnitTest --tests 'com.ikegami99.kiraenhance.update.*' --stacktrace
+gradle :app:testDebugUnitTest --tests 'com.ikegami99.kiraenhance.update.AppUpdateManifestParserTest' --tests 'com.ikegami99.kiraenhance.update.AppUpdateCheckerTest' --stacktrace
 ```
 
 Expected: compilation failure because the update classes do not exist.
 
-- [ ] **Step 4: Implement metadata, parser, HTTP source, and checker**
+- [ ] **Step 3: Implement the metadata model and parser**
 
 `AppUpdateInfo.kt`:
 
@@ -149,7 +145,44 @@ data class AppUpdateInfo(
 )
 ```
 
-`AppUpdateManifestParser.kt` validates nonblank version name, positive version code, HTTPS APK URL, and a 64-hex SHA-256 using the same Moshi/KotlinJsonAdapterFactory pattern as `ModelManifestParser`.
+`AppUpdateManifestParser.kt`:
+
+```kotlin
+package com.ikegami99.kiraenhance.update
+
+import com.squareup.moshi.JsonDataException
+import com.squareup.moshi.Moshi
+import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
+import java.net.URI
+
+class AppUpdateManifestParser(
+    moshi: Moshi = Moshi.Builder().addLast(KotlinJsonAdapterFactory()).build(),
+) {
+    private val adapter = moshi.adapter(AppUpdateInfo::class.java)
+
+    fun parse(json: String): AppUpdateInfo {
+        val info = try {
+            adapter.fromJson(json) ?: throw IllegalArgumentException("Update manifest is empty")
+        } catch (error: IllegalArgumentException) {
+            throw error
+        } catch (error: JsonDataException) {
+            throw IllegalArgumentException("Invalid update manifest", error)
+        } catch (error: RuntimeException) {
+            throw IllegalArgumentException("Invalid update manifest", error)
+        }
+        require(info.versionName.isNotBlank()) { "versionName must not be blank" }
+        require(info.versionCode > 0) { "versionCode must be positive" }
+        require(info.apkSha256.matches(Regex("^[A-Fa-f0-9]{64}$"))) { "Invalid APK SHA-256" }
+        val uri = URI(info.apkUrl)
+        require(uri.scheme.equals("https", ignoreCase = true) && !uri.host.isNullOrBlank()) {
+            "APK URL must use HTTPS"
+        }
+        return info
+    }
+}
+```
+
+- [ ] **Step 4: Implement HTTP source and version-code comparison**
 
 `AppUpdateChecker.kt`:
 
@@ -158,6 +191,9 @@ package com.ikegami99.kiraenhance.update
 
 import okhttp3.OkHttpClient
 import okhttp3.Request
+
+const val DEFAULT_UPDATE_MANIFEST_URL =
+    "https://github.com/IKEGAMI-99/KiraEnhance/releases/latest/download/update-manifest.json"
 
 fun interface UpdateManifestSource {
     fun load(): String
@@ -181,11 +217,15 @@ sealed interface AppUpdateCheckResult {
     data class UpToDate(val latestVersionName: String) : AppUpdateCheckResult
 }
 
+fun interface AppUpdateCheckUseCase {
+    fun check(currentVersionCode: Int): AppUpdateCheckResult
+}
+
 class AppUpdateChecker(
     private val source: UpdateManifestSource,
     private val parser: AppUpdateManifestParser = AppUpdateManifestParser(),
-) {
-    fun check(currentVersionCode: Int): AppUpdateCheckResult {
+) : AppUpdateCheckUseCase {
+    override fun check(currentVersionCode: Int): AppUpdateCheckResult {
         val info = parser.parse(source.load())
         return if (info.versionCode > currentVersionCode) {
             AppUpdateCheckResult.Available(info)
@@ -194,15 +234,12 @@ class AppUpdateChecker(
         }
     }
 }
-
-const val DEFAULT_UPDATE_MANIFEST_URL =
-    "https://github.com/IKEGAMI-99/KiraEnhance/releases/latest/download/update-manifest.json"
 ```
 
 - [ ] **Step 5: Run tests and verify GREEN**
 
 ```bash
-gradle :app:testDebugUnitTest --tests 'com.ikegami99.kiraenhance.update.*' --stacktrace
+gradle :app:testDebugUnitTest --tests 'com.ikegami99.kiraenhance.update.AppUpdateManifestParserTest' --tests 'com.ikegami99.kiraenhance.update.AppUpdateCheckerTest' --stacktrace
 ```
 
 Expected: PASS.
@@ -216,25 +253,31 @@ git commit -m "feat: add app update manifest checker"
 
 ---
 
-### Task 2: Download and verify update APKs
+### Task 2: Download, resume, and verify the update APK
 
 **Files:**
-- Create: `app/src/main/java/com/ikegami99/kiraenhance/update/AppUpdateDownloadManager.kt`
-- Create: `app/src/main/java/com/ikegami99/kiraenhance/update/AppUpdateDownloadWorker.kt`
 - Create: `app/src/main/java/com/ikegami99/kiraenhance/download/RangeResumePolicy.kt`
 - Modify: `app/src/main/java/com/ikegami99/kiraenhance/download/ModelDownloadWorker.kt`
 - Modify: `app/src/test/java/com/ikegami99/kiraenhance/download/ModelDownloadResumeTest.kt`
 - Create: `app/src/test/java/com/ikegami99/kiraenhance/download/RangeResumePolicyTest.kt`
+- Create: `app/src/main/java/com/ikegami99/kiraenhance/update/AppUpdateDownloadManager.kt`
+- Create: `app/src/main/java/com/ikegami99/kiraenhance/update/AppUpdateDownloadWorker.kt`
 - Create: `app/src/test/java/com/ikegami99/kiraenhance/update/AppUpdateDownloadManagerTest.kt`
 
 **Interfaces:**
-- Produces: `RangeResumePolicy.shouldRestartFromZero(responseCode: Int, resumeOffset: Long): Boolean`
-- Produces: `AppUpdateDownloadManager.enqueue(info: AppUpdateInfo): UUID`
-- Produces worker progress keys `KEY_BYTES_DOWNLOADED`, `KEY_TOTAL_BYTES`, `KEY_APK_PATH`, `KEY_ERROR`.
+- Produces: `RangeResumePolicy.shouldRestartFromZero(responseCode: Int, resumeOffset: Long): Boolean`.
+- Produces: `AppUpdateDownloadManager.enqueue(info: AppUpdateInfo): UUID`.
+- Produces worker output/progress keys `KEY_BYTES_DOWNLOADED`, `KEY_TOTAL_BYTES`, `KEY_APK_PATH`, and `KEY_ERROR`.
 
-- [ ] **Step 1: Write failing shared Range policy tests**
+- [ ] **Step 1: Write failing Range policy and manager tests**
 
 ```kotlin
+package com.ikegami99.kiraenhance.download
+
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
 class RangeResumePolicyTest {
     @Test
     fun http416RestartsOnlyWhenResuming() {
@@ -245,15 +288,45 @@ class RangeResumePolicyTest {
 }
 ```
 
-- [ ] **Step 2: Verify RED**
+```kotlin
+package com.ikegami99.kiraenhance.update
 
-```bash
-gradle :app:testDebugUnitTest --tests 'com.ikegami99.kiraenhance.download.RangeResumePolicyTest' --stacktrace
+import androidx.work.NetworkType
+import org.junit.Assert.assertEquals
+import org.junit.Test
+
+class AppUpdateDownloadManagerTest {
+    private val info = AppUpdateInfo(
+        versionName = "0.1.0-alpha02",
+        versionCode = 2,
+        releaseNotes = "test",
+        apkUrl = "https://example.com/app.apk",
+        apkSha256 = "c".repeat(64),
+    )
+
+    @Test
+    fun updateWorkUsesConnectedNetworkAndStableName() {
+        assertEquals(NetworkType.CONNECTED, AppUpdateDownloadManager.requiredNetworkType())
+        assertEquals("app-update-download-2", AppUpdateDownloadManager.workName(2))
+        val data = AppUpdateDownloadManager.inputDataFor(info)
+        assertEquals(info.apkUrl, data.getString(AppUpdateDownloadWorker.KEY_APK_URL))
+        assertEquals(info.apkSha256, data.getString(AppUpdateDownloadWorker.KEY_APK_SHA256))
+        assertEquals(2, data.getInt(AppUpdateDownloadWorker.KEY_VERSION_CODE, -1))
+    }
+}
 ```
 
-Expected: `RangeResumePolicy` unresolved.
+- [ ] **Step 2: Run tests and verify RED**
 
-- [ ] **Step 3: Extract the shared Range policy without changing behavior**
+```bash
+gradle :app:testDebugUnitTest --tests 'com.ikegami99.kiraenhance.download.RangeResumePolicyTest' --tests 'com.ikegami99.kiraenhance.update.AppUpdateDownloadManagerTest' --stacktrace
+```
+
+Expected: compilation failure because the new policy and update manager do not exist.
+
+- [ ] **Step 3: Extract the shared Range policy and keep the model regression green**
+
+`RangeResumePolicy.kt`:
 
 ```kotlin
 package com.ikegami99.kiraenhance.download
@@ -264,46 +337,217 @@ internal object RangeResumePolicy {
 }
 ```
 
-Change `ModelDownloadWorker` to call `RangeResumePolicy.shouldRestartFromZero(...)`, and update the existing resume regression test to reference the shared policy.
+Change `ModelDownloadWorker` to call `RangeResumePolicy.shouldRestartFromZero(response.code, resumeOffset)`. Change `ModelDownloadResumeTest` to assert the shared policy instead of the former companion helper.
 
-- [ ] **Step 4: Write failing AppUpdateDownloadManager serialization tests**
+- [ ] **Step 4: Implement the update download manager**
 
-Verify WorkManager input data contains APK URL, SHA-256, version code, and a stable unique work name `app-update-download-2` for version code 2.
+`AppUpdateDownloadManager.kt`:
 
 ```kotlin
-@Test
-fun createsStableUpdateWorkName() {
-    assertEquals("app-update-download-2", AppUpdateDownloadManager.workName(versionCode = 2))
+package com.ikegami99.kiraenhance.update
+
+import android.content.Context
+import androidx.work.Constraints
+import androidx.work.Data
+import androidx.work.ExistingWorkPolicy
+import androidx.work.NetworkType
+import androidx.work.OneTimeWorkRequest
+import androidx.work.WorkManager
+import java.util.UUID
+
+class AppUpdateDownloadManager(
+    context: Context,
+    private val workManager: WorkManager = WorkManager.getInstance(context.applicationContext),
+) {
+    fun enqueue(info: AppUpdateInfo): UUID {
+        val request = OneTimeWorkRequest.Builder(AppUpdateDownloadWorker::class.java)
+            .setConstraints(
+                Constraints.Builder()
+                    .setRequiredNetworkType(requiredNetworkType())
+                    .build(),
+            )
+            .setInputData(inputDataFor(info))
+            .addTag("app-update-download")
+            .build()
+        workManager.enqueueUniqueWork(
+            workName(info.versionCode),
+            ExistingWorkPolicy.REPLACE,
+            request,
+        )
+        return request.id
+    }
+
+    companion object {
+        internal fun requiredNetworkType(): NetworkType = NetworkType.CONNECTED
+        internal fun workName(versionCode: Int): String = "app-update-download-$versionCode"
+        internal fun inputDataFor(info: AppUpdateInfo): Data = Data.Builder()
+            .putString(AppUpdateDownloadWorker.KEY_APK_URL, info.apkUrl)
+            .putString(AppUpdateDownloadWorker.KEY_APK_SHA256, info.apkSha256)
+            .putInt(AppUpdateDownloadWorker.KEY_VERSION_CODE, info.versionCode)
+            .build()
+    }
 }
 ```
 
-- [ ] **Step 5: Implement update manager and worker**
+- [ ] **Step 5: Implement the update worker**
 
-The manager must use `NetworkType.CONNECTED` and `ExistingWorkPolicy.REPLACE`.
+`AppUpdateDownloadWorker.kt`:
 
-The worker must:
+```kotlin
+package com.ikegami99.kiraenhance.update
 
-```text
-1. Store partial data at filesDir/updates/KiraEnhance-<versionCode>.apk.part.
-2. Resume with Range when the partial file is non-empty.
-3. On HTTP 416 while resuming, delete the partial file and retry once from byte zero in the same worker loop.
-4. Accept only HTTP 200 or 206 for body transfer.
-5. If a resumed request receives 200, overwrite from zero rather than append.
-6. SHA-256 verify against apkSha256.
-7. Delete the bad file on checksum mismatch.
-8. Atomically move the verified file to filesDir/updates/KiraEnhance-<versionCode>.apk.
-9. Return the absolute verified APK path in KEY_APK_PATH.
+import android.content.Context
+import androidx.work.Data
+import androidx.work.Worker
+import androidx.work.WorkerParameters
+import com.ikegami99.kiraenhance.download.RangeResumePolicy
+import com.ikegami99.kiraenhance.util.Sha256
+import java.io.File
+import java.io.FileOutputStream
+import java.io.IOException
+import java.nio.file.AtomicMoveNotSupportedException
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
+import okhttp3.OkHttpClient
+import okhttp3.Request
+
+class AppUpdateDownloadWorker(
+    appContext: Context,
+    workerParams: WorkerParameters,
+) : Worker(appContext, workerParams) {
+    private val client = OkHttpClient()
+
+    override fun doWork(): Result {
+        val url = inputData.getString(KEY_APK_URL) ?: return failure("Missing APK URL")
+        val sha = inputData.getString(KEY_APK_SHA256) ?: return failure("Missing APK SHA-256")
+        val versionCode = inputData.getInt(KEY_VERSION_CODE, -1)
+        if (versionCode <= 0 || !url.startsWith("https://", ignoreCase = true)) {
+            return failure("Invalid update metadata")
+        }
+        val updateDir = File(applicationContext.filesDir, "updates").apply { mkdirs() }
+        val finalFile = File(updateDir, "KiraEnhance-$versionCode.apk")
+        val partFile = File(updateDir, "KiraEnhance-$versionCode.apk.part")
+
+        return try {
+            download(url, partFile)
+            if (!Sha256.matches(partFile, sha)) {
+                partFile.delete()
+                return failure("APK SHA-256 verification failed")
+            }
+            activate(partFile, finalFile)
+            Result.success(
+                Data.Builder()
+                    .putString(KEY_APK_PATH, finalFile.absolutePath)
+                    .build(),
+            )
+        } catch (_: IOException) {
+            Result.retry()
+        }
+    }
+
+    private fun download(url: String, partFile: File) {
+        var resumeOffset = if (partFile.isFile) partFile.length() else 0L
+        while (true) {
+            val builder = Request.Builder().url(url)
+            if (resumeOffset > 0L) builder.header("Range", "bytes=$resumeOffset-")
+            client.newCall(builder.build()).execute().use { response ->
+                if (RangeResumePolicy.shouldRestartFromZero(response.code, resumeOffset)) {
+                    partFile.delete()
+                    resumeOffset = 0L
+                    return@use
+                }
+                if (response.code == 408 || response.code == 429 || response.code in 500..599) {
+                    throw IOException("Transient HTTP ${response.code}")
+                }
+                require(response.code == 200 || response.code == 206) {
+                    "Update download failed with HTTP ${response.code}"
+                }
+                var append = resumeOffset > 0L && response.code == 206
+                if (resumeOffset > 0L && response.code == 200) {
+                    resumeOffset = 0L
+                    append = false
+                }
+                if (append) {
+                    val contentRange = response.header("Content-Range")
+                    if (contentRange == null || !contentRange.startsWith("bytes $resumeOffset-")) {
+                        partFile.delete()
+                        resumeOffset = 0L
+                        return@use
+                    }
+                }
+                val bodyLength = response.body.contentLength()
+                val total = if (bodyLength >= 0L) resumeOffset + bodyLength else 0L
+                FileOutputStream(partFile, append).use { output ->
+                    response.body.byteStream().use { input ->
+                        val buffer = ByteArray(128 * 1024)
+                        var downloaded = resumeOffset
+                        while (true) {
+                            if (isStopped) throw IOException("Update download stopped")
+                            val read = input.read(buffer)
+                            if (read < 0) break
+                            if (read == 0) continue
+                            output.write(buffer, 0, read)
+                            downloaded += read
+                            setProgressAsync(
+                                Data.Builder()
+                                    .putLong(KEY_BYTES_DOWNLOADED, downloaded)
+                                    .putLong(KEY_TOTAL_BYTES, total)
+                                    .build(),
+                            )
+                        }
+                        output.fd.sync()
+                    }
+                }
+                return
+            }
+        }
+    }
+
+    private fun activate(partFile: File, finalFile: File) {
+        try {
+            Files.move(
+                partFile.toPath(),
+                finalFile.toPath(),
+                StandardCopyOption.ATOMIC_MOVE,
+                StandardCopyOption.REPLACE_EXISTING,
+            )
+        } catch (_: AtomicMoveNotSupportedException) {
+            Files.move(partFile.toPath(), finalFile.toPath(), StandardCopyOption.REPLACE_EXISTING)
+        }
+    }
+
+    private fun failure(message: String): Result =
+        Result.failure(Data.Builder().putString(KEY_ERROR, message).build())
+
+    companion object {
+        const val KEY_APK_URL = "apkUrl"
+        const val KEY_APK_SHA256 = "apkSha256"
+        const val KEY_VERSION_CODE = "versionCode"
+        const val KEY_BYTES_DOWNLOADED = "bytesDownloaded"
+        const val KEY_TOTAL_BYTES = "totalBytes"
+        const val KEY_APK_PATH = "apkPath"
+        const val KEY_ERROR = "error"
+    }
+}
 ```
 
-Use the existing `Sha256.matches(file, expectedSha)` utility rather than a second checksum implementation.
+During implementation, convert `IllegalArgumentException` from non-200/206 responses into `Result.failure` in `doWork()` by adding:
 
-- [ ] **Step 6: Run unit tests and CI-equivalent compile**
+```kotlin
+} catch (error: IllegalArgumentException) {
+    failure(error.message ?: "Update download failed")
+} catch (_: IOException) {
+    Result.retry()
+}
+```
+
+- [ ] **Step 6: Run all unit tests and CI-equivalent compile**
 
 ```bash
 gradle :app:assembleDebug :app:testDebugUnitTest :app:assembleDebugAndroidTest --stacktrace
 ```
 
-Expected: PASS.
+Expected: PASS, including the existing model HTTP 416 regression.
 
 - [ ] **Step 7: Commit**
 
@@ -314,7 +558,7 @@ git commit -m "feat: download and verify app updates"
 
 ---
 
-### Task 3: Add safe Android package-installer handoff
+### Task 3: Add safe package-installer handoff
 
 **Files:**
 - Create: `app/src/main/java/com/ikegami99/kiraenhance/update/AppUpdateInstaller.kt`
@@ -323,20 +567,24 @@ git commit -m "feat: download and verify app updates"
 - Create: `app/src/test/java/com/ikegami99/kiraenhance/update/AppUpdateInstallPolicyTest.kt`
 
 **Interfaces:**
-- Produces: `AppUpdateInstallPolicy.action(canRequestPackageInstalls: Boolean): AppUpdateInstallAction`
-- Produces: `AppUpdateInstaller.installOrRequestPermission(apkFile: File)`
+- Produces: `AppUpdateInstallPolicy.action(canRequestPackageInstalls: Boolean): AppUpdateInstallAction`.
+- Produces: `AppUpdatePathPolicy.isManagedFile(updateDir: File, candidate: File): Boolean`.
+- Produces: `AppUpdateInstaller.installOrRequestPermission(apkFile: File)`.
 
-- [ ] **Step 1: Write failing pure install-policy test**
+- [ ] **Step 1: Write failing install-policy tests**
 
 ```kotlin
 package com.ikegami99.kiraenhance.update
 
+import java.io.File
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AppUpdateInstallPolicyTest {
     @Test
-    fun requestsPermissionBeforeInstallerWhenNeeded() {
+    fun permissionPolicyUsesSystemSettingsBeforeInstaller() {
         assertEquals(
             AppUpdateInstallAction.REQUEST_PERMISSION,
             AppUpdateInstallPolicy.action(canRequestPackageInstalls = false),
@@ -346,22 +594,38 @@ class AppUpdateInstallPolicyTest {
             AppUpdateInstallPolicy.action(canRequestPackageInstalls = true),
         )
     }
+
+    @Test
+    fun installerAcceptsOnlyFilesInsideUpdateDirectory() {
+        val root = File("build/test-updates").absoluteFile
+        assertTrue(AppUpdatePathPolicy.isManagedFile(root, File(root, "KiraEnhance-2.apk")))
+        assertFalse(AppUpdatePathPolicy.isManagedFile(root, File(root.parentFile, "outside.apk")))
+    }
 }
 ```
 
-- [ ] **Step 2: Verify RED**
+- [ ] **Step 2: Run test and verify RED**
 
 ```bash
 gradle :app:testDebugUnitTest --tests 'com.ikegami99.kiraenhance.update.AppUpdateInstallPolicyTest' --stacktrace
 ```
 
-Expected: update install policy unresolved.
+Expected: install policy classes unresolved.
 
-- [ ] **Step 3: Implement installer policy and Android intents**
+- [ ] **Step 3: Implement policy and installer**
 
-Policy:
+`AppUpdateInstaller.kt`:
 
 ```kotlin
+package com.ikegami99.kiraenhance.update
+
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
+import androidx.core.content.FileProvider
+import java.io.File
+
 enum class AppUpdateInstallAction { REQUEST_PERMISSION, INSTALL }
 
 internal object AppUpdateInstallPolicy {
@@ -369,41 +633,54 @@ internal object AppUpdateInstallPolicy {
         if (canRequestPackageInstalls) AppUpdateInstallAction.INSTALL
         else AppUpdateInstallAction.REQUEST_PERMISSION
 }
-```
 
-Installer behavior:
-
-```kotlin
-val canInstall = context.packageManager.canRequestPackageInstalls()
-if (!canInstall) {
-    context.startActivity(
-        Intent(
-            Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
-            Uri.parse("package:${context.packageName}"),
-        ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-    )
-    return
+internal object AppUpdatePathPolicy {
+    fun isManagedFile(updateDir: File, candidate: File): Boolean = runCatching {
+        val root = updateDir.canonicalFile
+        val file = candidate.canonicalFile
+        file.parentFile == root && file.name.endsWith(".apk", ignoreCase = true)
+    }.getOrDefault(false)
 }
 
-val uri = FileProvider.getUriForFile(
-    context,
-    "${context.packageName}.updates",
-    apkFile,
-)
-context.startActivity(
-    Intent(Intent.ACTION_VIEW)
-        .setDataAndType(uri, "application/vnd.android.package-archive")
-        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK),
-)
+class AppUpdateInstaller(private val context: Context) {
+    fun installOrRequestPermission(apkFile: File) {
+        val updateDir = File(context.filesDir, "updates")
+        require(AppUpdatePathPolicy.isManagedFile(updateDir, apkFile)) { "Unsafe update APK path" }
+        require(apkFile.isFile) { "Update APK does not exist" }
+
+        when (AppUpdateInstallPolicy.action(context.packageManager.canRequestPackageInstalls())) {
+            AppUpdateInstallAction.REQUEST_PERMISSION -> {
+                context.startActivity(
+                    Intent(
+                        Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                        Uri.parse("package:${context.packageName}"),
+                    ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                )
+            }
+            AppUpdateInstallAction.INSTALL -> {
+                val uri = FileProvider.getUriForFile(
+                    context,
+                    "${context.packageName}.updates",
+                    apkFile,
+                )
+                context.startActivity(
+                    Intent(Intent.ACTION_VIEW)
+                        .setDataAndType(uri, "application/vnd.android.package-archive")
+                        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK),
+                )
+            }
+        }
+    }
+}
 ```
 
-Manifest additions:
+Add to `AndroidManifest.xml`:
 
 ```xml
 <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 ```
 
-and inside `<application>`:
+Inside `<application>` add:
 
 ```xml
 <provider
@@ -417,7 +694,7 @@ and inside `<application>`:
 </provider>
 ```
 
-`update_file_paths.xml` must expose only the update folder:
+`app/src/main/res/xml/update_file_paths.xml`:
 
 ```xml
 <?xml version="1.0" encoding="utf-8"?>
@@ -426,7 +703,7 @@ and inside `<application>`:
 </paths>
 ```
 
-- [ ] **Step 4: Run unit tests and Android manifest compile**
+- [ ] **Step 4: Run tests and manifest compile**
 
 ```bash
 gradle :app:testDebugUnitTest :app:assembleDebug --stacktrace
@@ -437,13 +714,13 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add app/src/main/java/com/ikegami99/kiraenhance/update app/src/main/res/xml/update_file_paths.xml app/src/main/AndroidManifest.xml app/src/test/java/com/ikegami99/kiraenhance/update
+git add app/src/main/java/com/ikegami99/kiraenhance/update/AppUpdateInstaller.kt app/src/main/res/xml/update_file_paths.xml app/src/main/AndroidManifest.xml app/src/test/java/com/ikegami99/kiraenhance/update/AppUpdateInstallPolicyTest.kt
 git commit -m "feat: hand verified updates to Android installer"
 ```
 
 ---
 
-### Task 4: Add the App Update screen and navigation
+### Task 4: Add the update screen and navigation
 
 **Files:**
 - Create: `app/src/main/java/com/ikegami99/kiraenhance/ui/update/AppUpdateViewModel.kt`
@@ -455,31 +732,30 @@ git commit -m "feat: hand verified updates to Android installer"
 - Create: `app/src/androidTest/java/com/ikegami99/kiraenhance/ui/update/AppUpdateScreenTest.kt`
 
 **Interfaces:**
-- Produces: `AppUpdateUiState`
-- Produces: `AppUpdateViewModel.checkForUpdates()` and `downloadUpdate()`
-- Consumes: `AppUpdateInstaller.installOrRequestPermission(file)` from the route.
+- Produces: `AppUpdateUiState`.
+- Produces: `AppUpdateViewModel.checkForUpdates()` and `AppUpdateViewModel.downloadUpdate()`.
+- Produces: `AppUpdateRoute(onBack: () -> Unit)`.
 
-- [ ] **Step 1: Add required ViewModel coroutine/build config support**
+- [ ] **Step 1: Enable BuildConfig and ViewModel coroutines**
 
-In dependencies add:
+In `app/build.gradle.kts`, add:
+
+```kotlin
+buildFeatures {
+    compose = true
+    buildConfig = true
+}
+```
+
+and:
 
 ```kotlin
 implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.10.0")
 ```
 
-In `buildFeatures` add:
+- [ ] **Step 2: Create the screen state and ViewModel**
 
-```kotlin
-buildConfig = true
-```
-
-- [ ] **Step 2: Write failing Compose screen test**
-
-Render an idle state and assert `アプリ更新`, current version, and `アップデートを確認` are visible. Render an available state and assert latest version, release notes, and `ダウンロード` are visible. Render a verified-download state and assert `インストール` is enabled.
-
-- [ ] **Step 3: Implement ViewModel state and manual check flow**
-
-Use this state shape:
+`AppUpdateViewModel.kt` uses this state:
 
 ```kotlin
 data class AppUpdateUiState(
@@ -496,25 +772,110 @@ data class AppUpdateUiState(
 )
 ```
 
-`checkForUpdates()` runs `AppUpdateChecker.check(...)` on `Dispatchers.IO`, updates `availableUpdate` for Available, and sets `upToDate = true` for UpToDate. `downloadUpdate()` enqueues `AppUpdateDownloadManager`, observes that work ID, updates progress, and only sets `verifiedApkPath` from a successful worker output.
+The ViewModel constructor is:
+
+```kotlin
+class AppUpdateViewModel(
+    private val currentVersionName: String,
+    private val currentVersionCode: Int,
+    private val checker: AppUpdateCheckUseCase,
+    private val downloadManager: AppUpdateDownloadManager,
+    private val workManager: WorkManager,
+) : ViewModel()
+```
+
+`checkForUpdates()` sets `checking = true`, calls `checker.check(currentVersionCode)` inside `viewModelScope.launch(Dispatchers.IO)`, then updates state on the ViewModel scope. Available sets `availableUpdate`; UpToDate sets `upToDate = true`; exceptions set `errorMessage`.
+
+`downloadUpdate()` requires `availableUpdate`, calls `downloadManager.enqueue(info)`, observes that WorkInfo ID, maps progress keys to state, and on `SUCCEEDED` reads `KEY_APK_PATH`. It never creates `verifiedApkPath` from an ENQUEUED/RUNNING/FAILED work item.
+
+- [ ] **Step 3: Write the failing Compose UI test**
+
+`AppUpdateScreenTest.kt` must render three states and assert:
+
+```kotlin
+composeRule.onNodeWithText("アプリ更新").assertIsDisplayed()
+composeRule.onNodeWithText("現在 0.1.0-alpha01").assertIsDisplayed()
+composeRule.onNodeWithText("アップデートを確認").assertIsDisplayed()
+```
+
+For an available update:
+
+```kotlin
+composeRule.onNodeWithText("0.1.0-alpha02").assertIsDisplayed()
+composeRule.onNodeWithText("Updater test build").assertIsDisplayed()
+composeRule.onNodeWithText("ダウンロード").assertIsDisplayed()
+```
+
+For a verified APK state:
+
+```kotlin
+composeRule.onNodeWithText("インストール").assertIsEnabled()
+```
 
 - [ ] **Step 4: Implement screen and route**
 
-`AppUpdateScreen` displays current version, check button, latest version/release notes, linear download progress, errors, and the install button only when `verifiedApkPath != null`.
+`AppUpdateScreen` signature:
 
-`AppUpdateRoute` creates the ViewModel factory with `BuildConfig.VERSION_NAME` and `BuildConfig.VERSION_CODE`, and on Install verifies the path still points inside `filesDir/updates` before calling `AppUpdateInstaller`.
+```kotlin
+@Composable
+fun AppUpdateScreen(
+    state: AppUpdateUiState,
+    onBack: () -> Unit,
+    onCheck: () -> Unit,
+    onDownload: () -> Unit,
+    onInstall: () -> Unit,
+    modifier: Modifier = Modifier,
+)
+```
 
-- [ ] **Step 5: Wire navigation from Home**
+Render current version at top, a check button disabled while `checking`, latest version/release notes when `availableUpdate != null`, progress when `downloading`, `errorMessage` in error color, and `インストール` only when `verifiedApkPath != null`.
 
-Add:
+`AppUpdateRoute` constructs its factory using:
+
+```kotlin
+AppUpdateViewModel(
+    currentVersionName = BuildConfig.VERSION_NAME,
+    currentVersionCode = BuildConfig.VERSION_CODE,
+    checker = AppUpdateChecker(HttpUpdateManifestSource()),
+    downloadManager = AppUpdateDownloadManager(context.applicationContext),
+    workManager = WorkManager.getInstance(context.applicationContext),
+)
+```
+
+On Install, resolve `state.verifiedApkPath` to a `File` and call:
+
+```kotlin
+AppUpdateInstaller(context.applicationContext).installOrRequestPermission(File(path))
+```
+
+- [ ] **Step 5: Wire Home and navigation**
+
+Add to `KiraEnhanceApp.kt`:
 
 ```kotlin
 private const val UPDATE_ROUTE = "update"
 ```
 
-Add `onOpenAppUpdate` to `HomeScreen`, render an outlined `アプリ更新` button, and add a `composable(UPDATE_ROUTE)` destination in `KiraEnhanceApp`.
+Pass `onOpenAppUpdate = { navController.navigate(UPDATE_ROUTE) }` to Home and add:
 
-- [ ] **Step 6: Run unit and UI compile verification**
+```kotlin
+composable(UPDATE_ROUTE) {
+    AppUpdateRoute(onBack = { navController.popBackStack() })
+}
+```
+
+Add `onOpenAppUpdate: () -> Unit` to `HomeScreen` and an outlined button:
+
+```kotlin
+OutlinedButton(
+    onClick = onOpenAppUpdate,
+    modifier = Modifier.fillMaxWidth(),
+) {
+    Text("アプリ更新")
+}
+```
+
+- [ ] **Step 6: Run CI-equivalent verification**
 
 ```bash
 gradle :app:assembleDebug :app:testDebugUnitTest :app:assembleDebugAndroidTest --stacktrace
@@ -531,32 +892,68 @@ git commit -m "feat: add in-app update screen"
 
 ---
 
-### Task 5: Make release versioning and signing reproducible
+### Task 5: Add stable release signing and GitHub Release publishing
 
 **Files:**
 - Modify: `app/build.gradle.kts`
 - Create: `.github/workflows/release.yml`
 
 **Interfaces:**
-- Consumes environment: `KIRA_VERSION_NAME`, `KIRA_VERSION_CODE`, `KIRA_KEYSTORE_PATH`, `KIRA_RELEASE_STORE_PASSWORD`, `KIRA_RELEASE_KEY_ALIAS`, `KIRA_RELEASE_KEY_PASSWORD`.
-- Produces release assets: `KiraEnhance-<version>.apk`, matching `.sha256`, and `update-manifest.json`.
+- Consumes: `KIRA_VERSION_NAME`, `KIRA_VERSION_CODE`, `KIRA_KEYSTORE_PATH`, `KIRA_RELEASE_STORE_PASSWORD`, `KIRA_RELEASE_KEY_ALIAS`, `KIRA_RELEASE_KEY_PASSWORD`.
+- Produces: `KiraEnhance-<version>.apk`, `KiraEnhance-<version>.apk.sha256`, and `update-manifest.json` release assets.
 
-- [ ] **Step 1: Make Gradle version values environment-overridable**
+- [ ] **Step 1: Make version and signing configuration environment-driven**
 
-At top level:
+At the top of `app/build.gradle.kts` add:
 
 ```kotlin
 val kiraVersionName = providers.environmentVariable("KIRA_VERSION_NAME").orNull ?: "0.1.0-alpha01"
 val kiraVersionCode = providers.environmentVariable("KIRA_VERSION_CODE").orNull?.toIntOrNull() ?: 1
+val releaseStorePath = providers.environmentVariable("KIRA_KEYSTORE_PATH").orNull
+val releaseStorePassword = providers.environmentVariable("KIRA_RELEASE_STORE_PASSWORD").orNull
+val releaseKeyAlias = providers.environmentVariable("KIRA_RELEASE_KEY_ALIAS").orNull
+val releaseKeyPassword = providers.environmentVariable("KIRA_RELEASE_KEY_PASSWORD").orNull
+val releaseSigningReady = listOf(
+    releaseStorePath,
+    releaseStorePassword,
+    releaseKeyAlias,
+    releaseKeyPassword,
+).all { !it.isNullOrBlank() }
 ```
 
-Use these in `defaultConfig`.
+Set default config to:
 
-Configure a release signing config only when all four signing environment variables are present. The release workflow must fail before Gradle if any secret is absent; debug CI remains unaffected.
+```kotlin
+versionCode = kiraVersionCode
+versionName = kiraVersionName
+```
 
-- [ ] **Step 2: Add release workflow with explicit manual inputs**
+Inside `android` add:
 
-Create `.github/workflows/release.yml` with `workflow_dispatch` inputs `version_name`, `version_code`, and `release_notes`, `permissions: contents: write`, the same Android/ncnn setup as `android.yml`, and these release-specific steps:
+```kotlin
+signingConfigs {
+    if (releaseSigningReady) {
+        create("release") {
+            storeFile = file(requireNotNull(releaseStorePath))
+            storePassword = requireNotNull(releaseStorePassword)
+            keyAlias = requireNotNull(releaseKeyAlias)
+            keyPassword = requireNotNull(releaseKeyPassword)
+        }
+    }
+}
+
+buildTypes {
+    getByName("release") {
+        signingConfigs.findByName("release")?.let { signingConfig = it }
+    }
+}
+```
+
+- [ ] **Step 2: Create the release workflow**
+
+`.github/workflows/release.yml` must use `workflow_dispatch` inputs `version_name`, `version_code`, and `release_notes`, grant `contents: write`, install the same JDK/Android/ncnn/Gradle versions as `android.yml`, then run these release-specific steps.
+
+Validate and materialize secrets:
 
 ```yaml
       - name: Validate release inputs and secrets
@@ -589,7 +986,7 @@ Build:
         run: gradle :app:assembleRelease :app:testDebugUnitTest --stacktrace
 ```
 
-Generate assets:
+Prepare release assets safely, including notes as a file:
 
 ```yaml
       - name: Prepare release assets
@@ -604,6 +1001,7 @@ Generate assets:
           cp app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/$APK_NAME"
           SHA="$(sha256sum "$RUNNER_TEMP/$APK_NAME" | awk '{print $1}')"
           printf '%s  %s\n' "$SHA" "$APK_NAME" > "$RUNNER_TEMP/$APK_NAME.sha256"
+          printf '%s\n' "$RELEASE_NOTES" > "$RUNNER_TEMP/release-notes.md"
           APK_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/$TAG/$APK_NAME"
           jq -n \
             --arg versionName "$VERSION" \
@@ -626,19 +1024,19 @@ Publish:
         run: |
           gh release create "$TAG" \
             --title "KiraEnhance ${{ inputs.version_name }}" \
-            --notes '${{ inputs.release_notes }}' \
+            --notes-file "$RUNNER_TEMP/release-notes.md" \
             "$RUNNER_TEMP/$APK_NAME" \
             "$RUNNER_TEMP/$APK_NAME.sha256" \
             "$RUNNER_TEMP/update-manifest.json"
 ```
 
-- [ ] **Step 3: Verify development CI still succeeds without release secrets**
+- [ ] **Step 3: Verify debug CI still builds without release secrets**
 
 ```bash
 gradle :app:assembleDebug :app:testDebugUnitTest :app:assembleDebugAndroidTest --stacktrace
 ```
 
-Expected: PASS with no release-signing environment variables.
+Expected: PASS with no release-signing variables present.
 
 - [ ] **Step 4: Commit**
 
@@ -652,34 +1050,32 @@ git commit -m "ci: add signed KiraEnhance release workflow"
 ### Task 6: Release and real-device acceptance
 
 **Files:**
-- No source change expected.
+- No source files.
 
 **Interfaces:**
-- Validates the complete GitHub Release -> app check -> download -> checksum -> Android installer flow.
+- Validates GitHub Release -> manifest check -> APK download -> SHA-256 verification -> Android installer.
 
 - [ ] **Step 1: Configure the four GitHub Actions secrets**
 
-Store the base64-encoded stable keystore and its store password, key alias, and key password under the exact secret names in Global Constraints. Do not commit the keystore or passwords.
+Store the base64-encoded stable keystore and credentials under the exact secret names from Global Constraints. Never commit the keystore or credentials.
 
-- [ ] **Step 2: Publish the first stable-signed build**
+- [ ] **Step 2: Publish the first stable-signed baseline**
 
-Run the release workflow with `version_name = 0.1.0-alpha02`, `version_code = 2`, and release notes describing the updater test build.
+Run the release workflow with `version_name = 0.1.0-alpha02`, `version_code = 2`, and release notes `First stable-signed updater baseline`.
 
-- [ ] **Step 3: Install the stable-signed baseline manually once**
+- [ ] **Step 3: Install the baseline manually once**
 
-Because current debug APK signing may differ, uninstall the debug build if Android rejects replacement, then install the new stable-signed APK. Preserve this keystore permanently for all future updates.
+If Android rejects replacing the current debug APK because its signature differs, uninstall the debug build and install the stable-signed `0.1.0-alpha02` APK. Keep this release keystore permanently.
 
-- [ ] **Step 4: Publish the next stable-signed build**
+- [ ] **Step 4: Publish a higher-version test update**
 
-Run the workflow with a higher version code, for example `version_name = 0.1.0-alpha03` and `version_code = 3`.
+Run the release workflow with `version_name = 0.1.0-alpha03`, `version_code = 3`, and release notes `In-app updater acceptance build`.
 
-- [ ] **Step 5: Verify the in-app flow on device**
+- [ ] **Step 5: Verify in-app replacement**
 
-From `アプリ更新`, check for updates, confirm the new version and notes appear, download it, verify progress completes, tap Install, grant unknown-app-source permission if prompted, and confirm Android offers an in-place update without package/signature mismatch.
+From `アプリ更新`, confirm `0.1.0-alpha03` and its notes appear, download it, wait for checksum verification, tap Install, grant install-from-this-source permission if prompted, and confirm Android offers an in-place replacement rather than a package/signature mismatch.
 
-- [ ] **Step 6: Final CI evidence**
-
-Before publishing any test APK from the implementation branch, require:
+- [ ] **Step 6: Require final branch CI evidence**
 
 ```bash
 gradle :app:assembleDebug :app:testDebugUnitTest :app:assembleDebugAndroidTest --stacktrace

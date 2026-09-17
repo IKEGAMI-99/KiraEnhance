@@ -151,10 +151,143 @@ struct PisaModelBundle {
     InterpreterPtr vaeDecoder;
     std::unique_ptr<std::uint8_t[]> emptyPrompt;
     std::size_t emptyPromptBytes = 0;
+    MNN::Session* vaeEncoderSession = nullptr;
+    MNN::Session* unetSession = nullptr;
+    MNN::Session* vaeDecoderSession = nullptr;
+    MNNForwardType backend = MNN_FORWARD_CPU;
 };
 
 InterpreterPtr loadInterpreter(const std::string& path) {
     return InterpreterPtr(MNN::Interpreter::createFromFile(path.c_str()));
+}
+
+void releaseSession(
+    MNN::Interpreter* interpreter,
+    MNN::Session*& session
+) {
+    if (interpreter != nullptr && session != nullptr) {
+        interpreter->releaseSession(session);
+        session = nullptr;
+    }
+}
+
+void releaseSessions(PisaModelBundle& bundle) {
+    releaseSession(bundle.vaeEncoder.get(), bundle.vaeEncoderSession);
+    releaseSession(bundle.unet.get(), bundle.unetSession);
+    releaseSession(bundle.vaeDecoder.get(), bundle.vaeDecoderSession);
+}
+
+bool sessionUsesBackend(
+    MNN::Interpreter* interpreter,
+    MNN::Session* session,
+    MNNForwardType expectedBackend
+) {
+    if (interpreter == nullptr || session == nullptr) {
+        return false;
+    }
+
+    int backendTypes[2] = {-1, -1};
+    if (!interpreter->getSessionInfo(
+        session,
+        MNN::Interpreter::BACKENDS,
+        backendTypes
+    )) {
+        return false;
+    }
+
+    return backendTypes[0] == static_cast<int>(expectedBackend);
+}
+
+bool createSessionsForBackend(
+    PisaModelBundle& bundle,
+    MNNForwardType requestedBackend
+) {
+    releaseSessions(bundle);
+
+    MNN::BackendConfig backendConfig;
+    backendConfig.precision = MNN::BackendConfig::Precision_Low;
+    backendConfig.memory = MNN::BackendConfig::Memory_Low;
+    backendConfig.power = MNN::BackendConfig::Power_High;
+
+    MNN::ScheduleConfig config;
+    config.type = requestedBackend;
+    config.backupType = MNN_FORWARD_CPU;
+    config.backendConfig = &backendConfig;
+
+    switch (requestedBackend) {
+        case MNN_FORWARD_OPENCL:
+            config.mode = MNN_GPU_TUNING_FAST;
+            break;
+        case MNN_FORWARD_VULKAN:
+            config.mode = MNN_GPU_TUNING_NONE;
+            break;
+        case MNN_FORWARD_CPU:
+            config.numThread = 4;
+            break;
+        default:
+            return false;
+    }
+
+    bundle.vaeEncoderSession = bundle.vaeEncoder->createSession(config);
+    if (bundle.vaeEncoderSession == nullptr) {
+        releaseSessions(bundle);
+        return false;
+    }
+
+    bundle.unetSession = bundle.unet->createSession(config);
+    if (bundle.unetSession == nullptr) {
+        releaseSessions(bundle);
+        return false;
+    }
+
+    bundle.vaeDecoderSession = bundle.vaeDecoder->createSession(config);
+    if (bundle.vaeDecoderSession == nullptr) {
+        releaseSessions(bundle);
+        return false;
+    }
+
+    if (
+        !sessionUsesBackend(
+            bundle.vaeEncoder.get(),
+            bundle.vaeEncoderSession,
+            requestedBackend
+        ) ||
+        !sessionUsesBackend(
+            bundle.unet.get(),
+            bundle.unetSession,
+            requestedBackend
+        ) ||
+        !sessionUsesBackend(
+            bundle.vaeDecoder.get(),
+            bundle.vaeDecoderSession,
+            requestedBackend
+        )
+    ) {
+        releaseSessions(bundle);
+        return false;
+    }
+
+    bundle.backend = requestedBackend;
+    return true;
+}
+
+bool createPreferredSessions(
+    PisaModelBundle& bundle,
+    bool preferGpu
+) {
+    if (preferGpu) {
+        if (createSessionsForBackend(bundle, MNN_FORWARD_OPENCL)) {
+            return true;
+        }
+        if (createSessionsForBackend(bundle, MNN_FORWARD_VULKAN)) {
+            return true;
+        }
+    }
+    return createSessionsForBackend(bundle, MNN_FORWARD_CPU);
+}
+
+bool isGpuBackend(MNNForwardType backend) {
+    return backend == MNN_FORWARD_OPENCL || backend == MNN_FORWARD_VULKAN;
 }
 
 #endif
@@ -171,8 +304,6 @@ Java_com_ikegami99_kiraenhance_inference_mnn_MnnPisaNativeBridge_nativeLoadModel
     jstring emptyPromptPath,
     jboolean preferGpu
 ) {
-    (void)preferGpu;
-
     std::string vaeEncoder;
     std::string unet;
     std::string vaeDecoder;
@@ -221,12 +352,22 @@ Java_com_ikegami99_kiraenhance_inference_mnn_MnnPisaNativeBridge_nativeLoadModel
         return makeLoadResult(env, 0L, NativeError::LOAD_FAILED, false);
     }
 
+    bundle->vaeEncoder->setSessionMode(MNN::Interpreter::Session_Release);
+    bundle->unet->setSessionMode(MNN::Interpreter::Session_Release);
+    bundle->vaeDecoder->setSessionMode(MNN::Interpreter::Session_Release);
+
+    if (!createPreferredSessions(*bundle, preferGpu == JNI_TRUE)) {
+        return makeLoadResult(env, 0L, NativeError::LOAD_FAILED, false);
+    }
+
+    const bool gpuEnabled = isGpuBackend(bundle->backend);
     static_assert(sizeof(std::intptr_t) <= sizeof(jlong));
     const auto handle = static_cast<jlong>(
         reinterpret_cast<std::intptr_t>(bundle.release())
     );
-    return makeLoadResult(env, handle, NativeError::NONE, false);
+    return makeLoadResult(env, handle, NativeError::NONE, gpuEnabled);
 #else
+    (void)preferGpu;
     return makeLoadResult(env, 0L, NativeError::LOAD_FAILED, false);
 #endif
 }

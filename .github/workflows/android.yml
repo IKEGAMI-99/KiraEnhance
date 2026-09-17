@@ -51,24 +51,40 @@ jobs:
           echo "NCNN_DIR=$NCNN_DIR" >> "$GITHUB_ENV"
           echo "Using ncnn CMake package: $NCNN_DIR"
 
-      - name: Inspect verified MNN 3.6.1 Android SDK
+      - name: Prepare verified MNN 3.6.1 Android SDK
         shell: bash
         run: |
           set -euo pipefail
           MNN_ZIP="$RUNNER_TEMP/mnn-3.6.1-android.zip"
           MNN_ROOT="$RUNNER_TEMP/mnn-sdk"
+          MNN_SOURCE_ROOT="$RUNNER_TEMP/mnn-source"
+          MNN_COMMIT='d407447ed56c4121a11ccbd266dc184ca1ead0c2'
+
           curl --fail --location --retry 3 \
             --output "$MNN_ZIP" \
             'https://github.com/alibaba/MNN/releases/download/3.6.1/mnn_3.6.1_android_armv7_armv8_cpu_opencl_vulkan.zip'
           echo '46dc7e86d45b8d4e957db81d2603e0b7f6c9ce9b84092ffdcee1b843cbfc9d71  '"$MNN_ZIP" | sha256sum --check --strict
           mkdir -p "$MNN_ROOT"
           unzip -q "$MNN_ZIP" -d "$MNN_ROOT"
-          echo 'MNN CMake package candidates:'
-          find "$MNN_ROOT" -type f \( -name 'MNNConfig.cmake' -o -name 'MNN-config.cmake' \) -print | sort | head -n 20
-          echo 'MNN arm64 library candidates:'
-          find "$MNN_ROOT" -type f -path '*arm64*' \( -name 'libMNN*.so' -o -name 'libMNN*.a' \) -print | sort | head -n 40
-          echo 'MNN header candidates:'
-          find "$MNN_ROOT" -type f \( -name 'Interpreter.hpp' -o -name 'MNNDefine.h' \) -print | sort | head -n 20
+
+          MNN_PACKAGE_ROOT="$(find "$MNN_ROOT" -mindepth 1 -maxdepth 1 -type d -name 'mnn_3.6.1_android_*' -print -quit)"
+          test -n "$MNN_PACKAGE_ROOT"
+          MNN_LIB_DIR="$MNN_PACKAGE_ROOT/arm64-v8a"
+          test -f "$MNN_LIB_DIR/libMNN.so"
+
+          git init -q "$MNN_SOURCE_ROOT"
+          git -C "$MNN_SOURCE_ROOT" remote add origin 'https://github.com/alibaba/MNN.git'
+          git -C "$MNN_SOURCE_ROOT" fetch -q --depth=1 origin refs/tags/3.6.1
+          git -C "$MNN_SOURCE_ROOT" checkout -q --detach FETCH_HEAD
+          test "$(git -C "$MNN_SOURCE_ROOT" rev-parse HEAD)" = "$MNN_COMMIT"
+          MNN_INCLUDE_DIR="$MNN_SOURCE_ROOT/include"
+          test -f "$MNN_INCLUDE_DIR/MNN/Interpreter.hpp"
+          test -f "$MNN_INCLUDE_DIR/MNN/MNNDefine.h"
+
+          echo "MNN_LIB_DIR=$MNN_LIB_DIR" >> "$GITHUB_ENV"
+          echo "MNN_INCLUDE_DIR=$MNN_INCLUDE_DIR" >> "$GITHUB_ENV"
+          echo "Using MNN libraries: $MNN_LIB_DIR"
+          echo "Using MNN headers: $MNN_INCLUDE_DIR"
 
       - name: Set up Gradle 9.6
         uses: gradle/actions/setup-gradle@v4

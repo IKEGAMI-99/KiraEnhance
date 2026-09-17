@@ -5,13 +5,12 @@ import android.os.SystemClock
 import com.ikegami99.kiraenhance.image.RgbaPixelCodec
 import com.ikegami99.kiraenhance.inference.EngineError
 import com.ikegami99.kiraenhance.inference.EngineErrorCode
+import com.ikegami99.kiraenhance.inference.ModelLoadRequest
 import com.ikegami99.kiraenhance.inference.ModelLoadResult
 import com.ikegami99.kiraenhance.inference.UpscaleEngine
 import com.ikegami99.kiraenhance.inference.UpscaleProgress
 import com.ikegami99.kiraenhance.inference.UpscaleResult
 import com.ikegami99.kiraenhance.inference.UpscaleSettings
-import com.ikegami99.kiraenhance.inference.ncnn.NcnnUpscaleEngine
-import com.ikegami99.kiraenhance.inference.ncnn.UltraSharpModelRequestFactory
 import com.ikegami99.kiraenhance.model.ModelDescriptor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -41,28 +40,43 @@ data class EnhanceProcessProgress(
     val elapsedMs: Long,
 )
 
-class EnhanceProcessor(
-    private val engineFactory: () -> UpscaleEngine = { NcnnUpscaleEngine() },
-) {
+internal data class PreparedEnhanceExecution(
+    val engine: UpscaleEngine,
+    val request: ModelLoadRequest,
+    val settings: UpscaleSettings,
+)
+
+class EnhanceProcessor {
     @Volatile
     private var activeEngine: UpscaleEngine? = null
+
+    internal fun prepareExecution(
+        model: ModelDescriptor,
+        binding: EnhanceEngineBinding,
+        artifactPath: (String) -> String,
+    ): PreparedEnhanceExecution = PreparedEnhanceExecution(
+        engine = binding.engine,
+        request = binding.requestFactory.create(model, artifactPath),
+        settings = UpscaleSettings(outputScale = binding.outputScale),
+    )
 
     suspend fun run(
         bitmap: Bitmap,
         model: ModelDescriptor,
+        binding: EnhanceEngineBinding,
         artifactPath: (String) -> String,
         onProgress: (EnhanceProcessProgress) -> Unit,
     ): EnhanceProcessResult = coroutineScope {
         val startedAt = SystemClock.elapsedRealtime()
-        val engine = engineFactory()
+        val engine = binding.engine
         activeEngine = engine
 
         try {
-            val request = runCatching {
-                UltraSharpModelRequestFactory.create(model, artifactPath)
+            val execution = runCatching {
+                prepareExecution(model, binding, artifactPath)
             }.getOrElse { error ->
                 return@coroutineScope EnhanceProcessResult.Failed(
-                    message = error.message ?: "UltraSharpモデル設定が不正です",
+                    message = error.message ?: "${model.displayName}モデル設定が不正です",
                     code = EngineErrorCode.INVALID_INPUT,
                 )
             }
@@ -81,22 +95,22 @@ class EnhanceProcessor(
                 RgbaPixelCodec.encodeArgb(bitmap.width, bitmap.height, pixels)
             }
 
-            when (val load = withContext(Dispatchers.Default) { engine.load(request) }) {
+            when (val load = withContext(Dispatchers.Default) { execution.engine.load(execution.request) }) {
                 is ModelLoadResult.Failed -> {
                     return@coroutineScope EnhanceProcessResult.Failed(
-                        message = presentError(load.error),
+                        message = presentError(load.error, model.displayName),
                         code = load.error.code,
                     )
                 }
                 is ModelLoadResult.Loaded -> Unit
             }
 
-            val progressJob = launchProgressPolling(engine, startedAt, onProgress)
+            val progressJob = launchProgressPolling(execution.engine, startedAt, onProgress)
             val upscaleResult = try {
                 withContext(Dispatchers.Default) {
-                    engine.upscale(
+                    execution.engine.upscale(
                         input = input,
-                        settings = UpscaleSettings(outputScale = OUTPUT_SCALE),
+                        settings = execution.settings,
                     )
                 }
             } finally {
@@ -105,7 +119,7 @@ class EnhanceProcessor(
 
             when (upscaleResult) {
                 is UpscaleResult.Failed -> EnhanceProcessResult.Failed(
-                    message = presentError(upscaleResult.error),
+                    message = presentError(upscaleResult.error, model.displayName),
                     code = upscaleResult.error.code,
                 )
 
@@ -166,15 +180,15 @@ class EnhanceProcessor(
         }
     }
 
-    private fun presentError(error: EngineError): String = when (error.code) {
+    private fun presentError(error: EngineError, modelName: String): String = when (error.code) {
         EngineErrorCode.MODEL_ARTIFACT_MISSING ->
-            "モデルファイルが見つかりません。モデル管理からUltraSharpを再ダウンロードしてください。"
+            "モデルファイルが見つかりません。モデル管理から${modelName}を再ダウンロードしてください。"
         EngineErrorCode.MODEL_LOAD_FAILED ->
-            "UltraSharpモデルを読み込めません。モデル管理から再インストールしてください。"
+            "${modelName}モデルを読み込めません。モデル管理から再インストールしてください。"
         EngineErrorCode.GPU_UNAVAILABLE ->
             "この端末では必要なGPU機能を利用できません。"
         EngineErrorCode.INVALID_INPUT ->
-            "この画像をUltraSharpで処理できません: ${error.message}"
+            "この画像を${modelName}で処理できません: ${error.message}"
         EngineErrorCode.CANCELLED ->
             "処理をキャンセルしました"
         EngineErrorCode.OUT_OF_MEMORY ->
@@ -185,7 +199,6 @@ class EnhanceProcessor(
     }
 
     private companion object {
-        const val OUTPUT_SCALE = 4
         const val PROGRESS_POLL_MS = 100L
     }
 }

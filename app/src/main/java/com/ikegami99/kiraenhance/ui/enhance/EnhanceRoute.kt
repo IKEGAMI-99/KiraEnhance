@@ -23,6 +23,7 @@ import com.ikegami99.kiraenhance.image.EnhancedImageSaver
 import com.ikegami99.kiraenhance.image.SaveResult
 import com.ikegami99.kiraenhance.inference.EngineErrorCode
 import com.ikegami99.kiraenhance.inference.ncnn.NcnnUpscaleEngine
+import com.ikegami99.kiraenhance.inference.ncnn.UltraSharpModelRequestFactory
 import com.ikegami99.kiraenhance.model.InstalledModelStore
 import com.ikegami99.kiraenhance.model.ModelDescriptor
 import com.ikegami99.kiraenhance.model.ModelManifestParser
@@ -41,13 +42,7 @@ fun EnhanceRoute(
     val scope = rememberCoroutineScope()
     val logger = remember(applicationContext) { AppDiagnosticLogger.get(applicationContext) }
     val setup = remember(applicationContext) { createEnhanceSetup(applicationContext) }
-    val processor = remember(applicationContext) {
-        EnhanceProcessor {
-            NcnnUpscaleEngine(
-                totalRamMbProvider = { totalRamMb(applicationContext) },
-            )
-        }
-    }
+    val processor = remember { EnhanceProcessor() }
 
     var state by remember(setup) {
         mutableStateOf(
@@ -123,17 +118,26 @@ fun EnhanceRoute(
                 EnhanceEvent.Failed("先に画像を選択してください。"),
             )
         } else if (state.stage != EnhanceStage.PROCESSING) {
+            val binding = EnhanceEngineBinding(
+                engine = NcnnUpscaleEngine(
+                    totalRamMbProvider = { totalRamMb(applicationContext) },
+                ),
+                requestFactory = UltraSharpModelRequestFactory,
+                outputScale = 4,
+                saveModeName = "UltraSharp",
+            )
             resultBitmap?.takeIf { !it.isRecycled }?.recycle()
             resultBitmap = null
             state = EnhanceUiReducer.reduce(state, EnhanceEvent.ProcessingStarted)
             logger.log(
                 "Enhance",
-                "start model=${model.id} version=${model.version} input=${source.width}x${source.height} scale=4",
+                "start model=${model.id} version=${model.version} input=${source.width}x${source.height} scale=${binding.outputScale}",
             )
             scope.launch {
                 val result = processor.run(
                     bitmap = source,
                     model = model,
+                    binding = binding,
                     artifactPath = { fileName ->
                         setup.store.artifactFile(
                             modelId = model.id,

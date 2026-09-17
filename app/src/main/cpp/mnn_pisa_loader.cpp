@@ -2,9 +2,10 @@
 
 #include <cstdint>
 #include <fstream>
+#include <limits>
 #include <memory>
+#include <new>
 #include <string>
-#include <vector>
 
 #if KIRA_HAS_MNN
 #include <MNN/Interpreter.hpp>
@@ -80,29 +81,56 @@ bool copyRequiredPath(JNIEnv* env, jstring value, std::string& output) {
     return chars.copyTo(output);
 }
 
-bool readFp16Artifact(const std::string& path, std::vector<std::uint8_t>& output) {
+enum class ArtifactReadResult {
+    OK,
+    LOAD_FAILED,
+    OUT_OF_MEMORY,
+};
+
+ArtifactReadResult readFp16Artifact(
+    const std::string& path,
+    std::unique_ptr<std::uint8_t[]>& output,
+    std::size_t& outputBytes
+) {
     std::ifstream input(path, std::ios::binary | std::ios::ate);
     if (!input) {
-        return false;
+        return ArtifactReadResult::LOAD_FAILED;
     }
 
     const std::streamoff size = input.tellg();
-    if (size <= 0 || (size % 2) != 0) {
-        return false;
+    if (
+        size <= 0 ||
+        (size % 2) != 0 ||
+        size > static_cast<std::streamoff>(
+            std::numeric_limits<std::streamsize>::max()
+        )
+    ) {
+        return ArtifactReadResult::LOAD_FAILED;
     }
 
-    output.resize(static_cast<std::size_t>(size));
+    const auto byteCount = static_cast<std::size_t>(size);
+    std::unique_ptr<std::uint8_t[]> buffer(
+        new (std::nothrow) std::uint8_t[byteCount]
+    );
+    if (!buffer) {
+        return ArtifactReadResult::OUT_OF_MEMORY;
+    }
+
     input.seekg(0, std::ios::beg);
     if (!input) {
-        return false;
+        return ArtifactReadResult::LOAD_FAILED;
     }
 
-    return static_cast<bool>(
-        input.read(
-            reinterpret_cast<char*>(output.data()),
-            static_cast<std::streamsize>(output.size())
-        )
-    );
+    if (!input.read(
+        reinterpret_cast<char*>(buffer.get()),
+        static_cast<std::streamsize>(byteCount)
+    )) {
+        return ArtifactReadResult::LOAD_FAILED;
+    }
+
+    output = std::move(buffer);
+    outputBytes = byteCount;
+    return ArtifactReadResult::OK;
 }
 
 #if KIRA_HAS_MNN
@@ -121,7 +149,8 @@ struct PisaModelBundle {
     InterpreterPtr vaeEncoder;
     InterpreterPtr unet;
     InterpreterPtr vaeDecoder;
-    std::vector<std::uint8_t> emptyPrompt;
+    std::unique_ptr<std::uint8_t[]> emptyPrompt;
+    std::size_t emptyPromptBytes = 0;
 };
 
 InterpreterPtr loadInterpreter(const std::string& path) {
@@ -158,38 +187,45 @@ Java_com_ikegami99_kiraenhance_inference_mnn_MnnPisaNativeBridge_nativeLoadModel
     }
 
 #if KIRA_HAS_MNN
-    try {
-        auto bundle = std::make_unique<PisaModelBundle>();
-
-        bundle->vaeEncoder = loadInterpreter(vaeEncoder);
-        if (!bundle->vaeEncoder) {
-            return makeLoadResult(env, 0L, NativeError::LOAD_FAILED, false);
-        }
-
-        bundle->unet = loadInterpreter(unet);
-        if (!bundle->unet) {
-            return makeLoadResult(env, 0L, NativeError::LOAD_FAILED, false);
-        }
-
-        bundle->vaeDecoder = loadInterpreter(vaeDecoder);
-        if (!bundle->vaeDecoder) {
-            return makeLoadResult(env, 0L, NativeError::LOAD_FAILED, false);
-        }
-
-        if (!readFp16Artifact(emptyPrompt, bundle->emptyPrompt)) {
-            return makeLoadResult(env, 0L, NativeError::LOAD_FAILED, false);
-        }
-
-        static_assert(sizeof(std::intptr_t) <= sizeof(jlong));
-        const auto handle = static_cast<jlong>(
-            reinterpret_cast<std::intptr_t>(bundle.release())
-        );
-        return makeLoadResult(env, handle, NativeError::NONE, false);
-    } catch (const std::bad_alloc&) {
+    std::unique_ptr<PisaModelBundle> bundle(
+        new (std::nothrow) PisaModelBundle()
+    );
+    if (!bundle) {
         return makeLoadResult(env, 0L, NativeError::OUT_OF_MEMORY, false);
-    } catch (...) {
-        return makeLoadResult(env, 0L, NativeError::INTERNAL, false);
     }
+
+    bundle->vaeEncoder = loadInterpreter(vaeEncoder);
+    if (!bundle->vaeEncoder) {
+        return makeLoadResult(env, 0L, NativeError::LOAD_FAILED, false);
+    }
+
+    bundle->unet = loadInterpreter(unet);
+    if (!bundle->unet) {
+        return makeLoadResult(env, 0L, NativeError::LOAD_FAILED, false);
+    }
+
+    bundle->vaeDecoder = loadInterpreter(vaeDecoder);
+    if (!bundle->vaeDecoder) {
+        return makeLoadResult(env, 0L, NativeError::LOAD_FAILED, false);
+    }
+
+    const ArtifactReadResult promptResult = readFp16Artifact(
+        emptyPrompt,
+        bundle->emptyPrompt,
+        bundle->emptyPromptBytes
+    );
+    if (promptResult == ArtifactReadResult::OUT_OF_MEMORY) {
+        return makeLoadResult(env, 0L, NativeError::OUT_OF_MEMORY, false);
+    }
+    if (promptResult != ArtifactReadResult::OK) {
+        return makeLoadResult(env, 0L, NativeError::LOAD_FAILED, false);
+    }
+
+    static_assert(sizeof(std::intptr_t) <= sizeof(jlong));
+    const auto handle = static_cast<jlong>(
+        reinterpret_cast<std::intptr_t>(bundle.release())
+    );
+    return makeLoadResult(env, handle, NativeError::NONE, false);
 #else
     return makeLoadResult(env, 0L, NativeError::LOAD_FAILED, false);
 #endif

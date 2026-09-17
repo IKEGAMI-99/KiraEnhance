@@ -51,6 +51,25 @@ jobs:
           echo "NCNN_DIR=$NCNN_DIR" >> "$GITHUB_ENV"
           echo "Using ncnn CMake package: $NCNN_DIR"
 
+      - name: Inspect verified MNN 3.6.1 Android SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          MNN_ZIP="$RUNNER_TEMP/mnn-3.6.1-android.zip"
+          MNN_ROOT="$RUNNER_TEMP/mnn-sdk"
+          curl --fail --location --retry 3 \
+            --output "$MNN_ZIP" \
+            'https://github.com/alibaba/MNN/releases/download/3.6.1/mnn_3.6.1_android_armv7_armv8_cpu_opencl_vulkan.zip'
+          echo '46dc7e86d45b8d4e957db81d2603e0b7f6c9ce9b84092ffdcee1b843cbfc9d71  '"$MNN_ZIP" | sha256sum --check --strict
+          mkdir -p "$MNN_ROOT"
+          unzip -q "$MNN_ZIP" -d "$MNN_ROOT"
+          echo 'MNN CMake package candidates:'
+          find "$MNN_ROOT" -type f \( -name 'MNNConfig.cmake' -o -name 'MNN-config.cmake' \) -print | sort | head -n 20
+          echo 'MNN arm64 library candidates:'
+          find "$MNN_ROOT" -type f -path '*arm64*' \( -name 'libMNN*.so' -o -name 'libMNN*.a' \) -print | sort | head -n 40
+          echo 'MNN header candidates:'
+          find "$MNN_ROOT" -type f \( -name 'Interpreter.hpp' -o -name 'MNNDefine.h' \) -print | sort | head -n 20
+
       - name: Set up Gradle 9.6
         uses: gradle/actions/setup-gradle@v4
         with:

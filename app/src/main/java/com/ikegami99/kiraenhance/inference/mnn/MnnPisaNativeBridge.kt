@@ -3,6 +3,15 @@ package com.ikegami99.kiraenhance.inference.mnn
 import java.nio.ByteBuffer
 
 object MnnPisaNativeBridge : MnnPisaNativeApi {
+    init {
+        System.loadLibrary("kiraenhance")
+    }
+
+    private external fun nativeRuntimeInfo(): String
+
+    fun runtimeInfo(): MnnRuntimeInfo =
+        MnnRuntimeInfo.parse(nativeRuntimeInfo())
+
     override fun loadModel(
         vaeEncoderPath: String,
         unetPath: String,

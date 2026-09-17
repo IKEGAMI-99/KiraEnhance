@@ -42,6 +42,7 @@ add_library(
     kiraenhance
     SHARED
     kira_native.cpp
+    mnn_runtime_probe.cpp
 )
 
 target_compile_features(kiraenhance PRIVATE cxx_std_17)

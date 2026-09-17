@@ -12,10 +12,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
 import com.ikegami99.kiraenhance.diagnostics.AppDiagnosticLogger
+import com.ikegami99.kiraenhance.model.EnhancementMode
 import com.ikegami99.kiraenhance.ui.enhance.EnhanceRoute
 import com.ikegami99.kiraenhance.ui.home.HomeScreen
 import com.ikegami99.kiraenhance.ui.models.ModelManagerScreen
@@ -27,7 +30,9 @@ import com.ikegami99.kiraenhance.ui.update.AppUpdateViewModel
 import com.ikegami99.kiraenhance.ui.update.AppUpdateViewModelFactory
 
 private const val HOME_ROUTE = "home"
-private const val ENHANCE_ROUTE = "enhance"
+private const val ENHANCE_ROUTE = "enhance/{mode}"
+private const val ENHANCE_ROUTE_PREFIX = "enhance"
+private const val MODE_ARGUMENT = "mode"
 private const val MODELS_ROUTE = "models"
 private const val SMOKE_ROUTE = "smoke"
 private const val UPDATE_ROUTE = "update"
@@ -89,14 +94,33 @@ fun KiraEnhanceApp() {
                     logger.log("LogExport", "save requested")
                     logSaveLauncher.launch(logger.exportFileName())
                 },
-                onStartEnhance = { navController.navigate(ENHANCE_ROUTE) },
+                onStartEnhance = { mode ->
+                    enhancementModeRouteToken(mode)?.let { token ->
+                        navController.navigate("$ENHANCE_ROUTE_PREFIX/$token")
+                    }
+                },
             )
         }
-        composable(ENHANCE_ROUTE) {
-            EnhanceRoute(
-                onBack = { navController.popBackStack() },
-                onOpenModelManager = { navController.navigate(MODELS_ROUTE) },
-            )
+        composable(
+            route = ENHANCE_ROUTE,
+            arguments = listOf(
+                navArgument(MODE_ARGUMENT) { type = NavType.StringType },
+            ),
+        ) { backStackEntry ->
+            val token = backStackEntry.arguments?.getString(MODE_ARGUMENT)
+            val mode = enhancementModeFromRouteToken(token)
+            if (mode == null) {
+                LaunchedEffect(token) {
+                    logger.log("Enhance", "invalid route mode=${token ?: "missing"}")
+                    navController.popBackStack()
+                }
+            } else {
+                EnhanceRoute(
+                    mode = mode,
+                    onBack = { navController.popBackStack() },
+                    onOpenModelManager = { navController.navigate(MODELS_ROUTE) },
+                )
+            }
         }
         composable(MODELS_ROUTE) {
             val factory = remember(context.applicationContext) {
@@ -142,4 +166,18 @@ fun KiraEnhanceApp() {
             )
         }
     }
+}
+
+private fun enhancementModeRouteToken(mode: EnhancementMode): String? = when (mode) {
+    EnhancementMode.BALANCED -> "balanced"
+    EnhancementMode.ULTRASHARP -> "ultrasharp"
+    EnhancementMode.FIDELITY,
+    EnhancementMode.DETAIL,
+    -> null
+}
+
+private fun enhancementModeFromRouteToken(token: String?): EnhancementMode? = when (token) {
+    "balanced" -> EnhancementMode.BALANCED
+    "ultrasharp" -> EnhancementMode.ULTRASHARP
+    else -> null
 }

@@ -18,6 +18,8 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.ikegami99.kiraenhance.diagnostics.AppDiagnosticLogger
+import com.ikegami99.kiraenhance.diagnostics.MnnRuntimeDiagnostics
+import com.ikegami99.kiraenhance.inference.mnn.MnnPisaNativeBridge
 import com.ikegami99.kiraenhance.model.EnhancementMode
 import com.ikegami99.kiraenhance.ui.enhance.EnhanceRoute
 import com.ikegami99.kiraenhance.ui.home.HomeScreen
@@ -79,6 +81,12 @@ fun KiraEnhanceApp() {
 
     LaunchedEffect(logger) {
         logger.logAppSession()
+        logger.log(
+            "MNN",
+            MnnRuntimeDiagnostics.capture {
+                MnnPisaNativeBridge.runtimeInfo()
+            },
+        )
     }
 
     NavHost(

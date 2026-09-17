@@ -3,13 +3,14 @@ package com.ikegami99.kiraenhance.inference.ncnn
 import com.ikegami99.kiraenhance.inference.EngineCapabilities
 import com.ikegami99.kiraenhance.inference.ModelArtifactFile
 import com.ikegami99.kiraenhance.inference.ModelLoadRequest
+import com.ikegami99.kiraenhance.inference.ModelRequestFactory
 import com.ikegami99.kiraenhance.inference.PixelFormat
 import com.ikegami99.kiraenhance.model.EnhancementMode
 import com.ikegami99.kiraenhance.model.ModelBackend
 import com.ikegami99.kiraenhance.model.ModelDescriptor
 
-object UltraSharpModelRequestFactory {
-    fun create(
+object UltraSharpModelRequestFactory : ModelRequestFactory {
+    override fun create(
         model: ModelDescriptor,
         artifactPath: (String) -> String,
     ): ModelLoadRequest {

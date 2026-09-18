@@ -22,7 +22,10 @@
           "sha256": "0101010101010101010101010101010101010101010101010101010101010101"
         }
       ],
-      "supportedScales": [2, 4],
+      "supportedScales": [
+        2,
+        4
+      ],
       "minAppVersion": "0.1.0-alpha01",
       "estimatedRamMb": 2048,
       "licenseName": "VERIFY-BEFORE-DISTRIBUTION",
@@ -39,16 +42,37 @@
       "backend": "MNN",
       "artifacts": [
         {
-          "fileName": "model.mnn",
-          "downloadUrl": "https://example.invalid/models/pisa-sr/model.mnn",
-          "fileSizeBytes": 2000000,
+          "fileName": "vae_encoder.mnn",
+          "downloadUrl": "https://example.invalid/models/pisa-sr/vae_encoder.mnn",
+          "fileSizeBytes": 1,
           "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+        },
+        {
+          "fileName": "unet_default.mnn",
+          "downloadUrl": "https://example.invalid/models/pisa-sr/unet_default.mnn",
+          "fileSizeBytes": 1,
+          "sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+        },
+        {
+          "fileName": "vae_decoder.mnn",
+          "downloadUrl": "https://example.invalid/models/pisa-sr/vae_decoder.mnn",
+          "fileSizeBytes": 1,
+          "sha256": "3333333333333333333333333333333333333333333333333333333333333333"
+        },
+        {
+          "fileName": "empty_prompt.fp16",
+          "downloadUrl": "https://example.invalid/models/pisa-sr/empty_prompt.fp16",
+          "fileSizeBytes": 1,
+          "sha256": "4444444444444444444444444444444444444444444444444444444444444444"
         }
       ],
-      "supportedScales": [2, 4],
+      "supportedScales": [
+        2,
+        4
+      ],
       "minAppVersion": "0.1.0-alpha01",
       "estimatedRamMb": 8000,
-      "licenseName": "Apache-2.0-target-project-license",
+      "licenseName": "VERIFY-CONVERTED-WEIGHTS",
       "licenseUrl": "https://example.invalid/licenses/pisa-sr",
       "description": "Required balanced PiSA-SR target. Final converted weights and all upstream dependencies require verification before distribution.",
       "community": false,
@@ -57,8 +81,8 @@
           "id": "fidelity",
           "label": "忠実度",
           "type": "SLIDER",
-          "min": 0.0,
-          "max": 1.0,
+          "min": 0,
+          "max": 1,
           "defaultValue": 0.65,
           "choices": []
         }
@@ -78,7 +102,9 @@
           "sha256": "2222222222222222222222222222222222222222222222222222222222222222"
         }
       ],
-      "supportedScales": [4],
+      "supportedScales": [
+        4
+      ],
       "minAppVersion": "0.1.0-alpha01",
       "estimatedRamMb": 4096,
       "licenseName": "VERIFY-BEFORE-DISTRIBUTION",
@@ -107,7 +133,9 @@
           "sha256": "3434343434343434343434343434343434343434343434343434343434343434"
         }
       ],
-      "supportedScales": [4],
+      "supportedScales": [
+        4
+      ],
       "minAppVersion": "0.1.0-alpha01",
       "estimatedRamMb": 2048,
       "licenseName": "CC BY-NC-SA 4.0",

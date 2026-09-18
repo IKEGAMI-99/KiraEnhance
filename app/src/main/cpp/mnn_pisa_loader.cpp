@@ -28,6 +28,15 @@ constexpr std::size_t EMPTY_PROMPT_FP16_BYTES =
 constexpr float VAE_SCALING_FACTOR = 0.18215f;
 constexpr std::int64_t PISA_TIMESTEP = 1;
 constexpr std::uint64_t SMOKE_NOISE_SEED = 0x50495341534d4f4bULL;
+constexpr int SMOKE_SOURCE_WIDTH = 2;
+constexpr int SMOKE_SOURCE_HEIGHT = 2;
+constexpr int SMOKE_SOURCE_STRIDE = SMOKE_SOURCE_WIDTH * 4;
+constexpr std::uint8_t SMOKE_SOURCE_RGBA[] = {
+    16, 32, 64, 255,
+    224, 48, 32, 255,
+    24, 208, 80, 255,
+    240, 224, 192, 255,
+};
 
 enum class NativeError : jlong {
     NONE = 0,
@@ -667,9 +676,6 @@ NativeError runPisaSmoke(
         return NativeError::OUT_OF_MEMORY;
     }
 
-    std::unique_ptr<float[]> image(
-        new (std::nothrow) float[imageCount]()
-    );
     std::unique_ptr<float[]> moments(
         new (std::nothrow) float[momentsCount]
     );
@@ -686,7 +692,6 @@ NativeError runPisaSmoke(
         new (std::nothrow) float[imageCount]
     );
     if (
-        !image ||
         !moments ||
         !noise ||
         !controlLatent ||
@@ -702,10 +707,12 @@ NativeError runPisaSmoke(
             "image"
         );
     if (
-        !kira::pisa::writeFloatNchwTensor(
+        !kira::pisa::writeRgba8888BicubicNormalizedTensor(
             encoderInput,
-            image.get(),
-            imageCount
+            SMOKE_SOURCE_RGBA,
+            SMOKE_SOURCE_WIDTH,
+            SMOKE_SOURCE_HEIGHT,
+            SMOKE_SOURCE_STRIDE
         )
     ) {
         return NativeError::INFERENCE_FAILED;

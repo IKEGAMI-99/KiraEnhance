@@ -13,6 +13,7 @@ import java.io.File
 import java.nio.ByteBuffer
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -39,6 +40,69 @@ class MnnPisaUpscaleEngineTest {
         engine.unload()
         assertEquals(1, native.unloadCalls)
         assertFalse(engine.isLoaded())
+    }
+
+    @Test
+    fun `captures native session and graph diagnostics after load`() {
+        val sessionInfo = MnnPisaSessionInfo(
+            backend = MnnPisaBackend.OPENCL,
+            gpuEnabled = true,
+        )
+        val tensorInfo = listOf(
+            MnnPisaTensorInfo(
+                graph = MnnPisaGraph.UNET,
+                role = MnnTensorRole.INPUT,
+                name = "latent",
+                shape = listOf(1, 4, 64, 64),
+                typeCode = 2,
+                typeBits = 16,
+                typeLanes = 1,
+                dimensionType = 1,
+            ),
+        )
+        val native = FakeMnnPisaNativeApi(
+            loadResult = MnnPisaNativeLoadResult(
+                handle = 7L,
+                errorCode = MnnPisaNativeError.NONE,
+                gpuEnabled = true,
+            ),
+            sessionInfo = sessionInfo,
+            graphInfo = tensorInfo,
+        )
+        val engine = MnnPisaUpscaleEngine(native)
+
+        assertTrue(engine.load(request()) is ModelLoadResult.Loaded)
+        assertEquals(
+            MnnPisaDiagnosticsSnapshot(
+                modelVersion = "converted-test",
+                sessionInfo = sessionInfo,
+                tensorInfo = tensorInfo,
+            ),
+            engine.diagnostics(),
+        )
+        assertEquals(1, native.sessionInfoCalls)
+        assertEquals(1, native.graphInfoCalls)
+
+        engine.unload()
+        assertNull(engine.diagnostics())
+    }
+
+    @Test
+    fun `diagnostic probe failure does not fail model load`() {
+        val native = FakeMnnPisaNativeApi(
+            throwOnDiagnostics = true,
+        )
+        val engine = MnnPisaUpscaleEngine(native)
+
+        assertTrue(engine.load(request()) is ModelLoadResult.Loaded)
+        assertEquals(
+            MnnPisaDiagnosticsSnapshot(
+                modelVersion = "converted-test",
+                sessionInfo = null,
+                tensorInfo = null,
+            ),
+            engine.diagnostics(),
+        )
     }
 
     @Test
@@ -124,10 +188,15 @@ class MnnPisaUpscaleEngineTest {
             outputRowStrideBytes = 0,
             gpuUsed = false,
         ),
+        private val sessionInfo: MnnPisaSessionInfo? = null,
+        private val graphInfo: List<MnnPisaTensorInfo>? = null,
+        private val throwOnDiagnostics: Boolean = false,
     ) : MnnPisaNativeApi {
         var loadCalls = 0
         var unloadCalls = 0
         var cancelCalls = 0
+        var sessionInfoCalls = 0
+        var graphInfoCalls = 0
 
         override fun loadModel(
             vaeEncoderPath: String,
@@ -138,6 +207,22 @@ class MnnPisaUpscaleEngineTest {
         ): MnnPisaNativeLoadResult {
             loadCalls += 1
             return loadResult
+        }
+
+        override fun sessionInfo(handle: Long): MnnPisaSessionInfo? {
+            sessionInfoCalls += 1
+            if (throwOnDiagnostics) {
+                error("session diagnostics unavailable")
+            }
+            return sessionInfo
+        }
+
+        override fun graphInfo(handle: Long): List<MnnPisaTensorInfo>? {
+            graphInfoCalls += 1
+            if (throwOnDiagnostics) {
+                error("graph diagnostics unavailable")
+            }
+            return graphInfo
         }
 
         override fun infer(

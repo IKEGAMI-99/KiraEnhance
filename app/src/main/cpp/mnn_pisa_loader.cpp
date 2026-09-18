@@ -8,6 +8,7 @@
 #include "pisa_image_tensor.h"
 #include "pisa_resize_plan.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <fstream>
@@ -1243,6 +1244,25 @@ Java_com_ikegami99_kiraenhance_inference_mnn_MnnPisaNativeBridge_nativeInfer(
         return makeInferenceResult(env, NativeError::INVALID_ARGUMENT);
     }
 
+    // The first real-image milestone intentionally supports only the
+    // upstream common path: no minimum-size preboost and no post-model
+    // exact-size correction. Reject those shapes before resizing any MNN
+    // session so an unsupported request stays cheap.
+    if (
+        resizePlan.smallInputBoosted ||
+        resizePlan.modelWidth != resizePlan.outputWidth ||
+        resizePlan.modelHeight != resizePlan.outputHeight
+    ) {
+        return makeInferenceResult(
+            env,
+            NativeError::NOT_IMPLEMENTED,
+            0,
+            0,
+            0,
+            isGpuBackend(bundle->backend)
+        );
+    }
+
     int latentWidth = 0;
     int latentHeight = 0;
     if (!preparePisaGraph(
@@ -1255,25 +1275,6 @@ Java_com_ikegami99_kiraenhance_inference_mnn_MnnPisaNativeBridge_nativeInfer(
         return makeInferenceResult(
             env,
             NativeError::LOAD_FAILED,
-            0,
-            0,
-            0,
-            isGpuBackend(bundle->backend)
-        );
-    }
-
-    // The first real-image milestone intentionally supports only the
-    // upstream common path: no minimum-size preboost and no post-model
-    // exact-size correction. Small/odd inputs remain blocked until those
-    // resize stages and tiled execution are implemented.
-    if (
-        resizePlan.smallInputBoosted ||
-        resizePlan.modelWidth != resizePlan.outputWidth ||
-        resizePlan.modelHeight != resizePlan.outputHeight
-    ) {
-        return makeInferenceResult(
-            env,
-            NativeError::NOT_IMPLEMENTED,
             0,
             0,
             0,

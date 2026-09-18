@@ -159,6 +159,44 @@ class MnnPisaUpscaleEngineTest {
     }
 
     @Test
+    fun `prepares loaded graph through native boundary`() {
+        val expected = MnnPisaNativePrepareResult(
+            errorCode = MnnPisaNativeError.NONE,
+            imageWidth = 768,
+            imageHeight = 512,
+            latentWidth = 96,
+            latentHeight = 64,
+        )
+        val native = FakeMnnPisaNativeApi(
+            prepareResult = expected,
+        )
+        val engine = MnnPisaUpscaleEngine(native)
+        assertTrue(engine.load(request()) is ModelLoadResult.Loaded)
+
+        val result = engine.prepareGraph(
+            imageWidth = 768,
+            imageHeight = 512,
+        )
+
+        assertEquals(expected, result)
+        assertEquals(1, native.prepareCalls)
+    }
+
+    @Test
+    fun `graph preparation rejects unloaded engine`() {
+        val native = FakeMnnPisaNativeApi()
+        val engine = MnnPisaUpscaleEngine(native)
+
+        val result = engine.prepareGraph(
+            imageWidth = 512,
+            imageHeight = 512,
+        )
+
+        assertEquals(MnnPisaNativeError.LOAD_FAILED, result.errorCode)
+        assertEquals(0, native.prepareCalls)
+    }
+
+    @Test
     fun `not implemented inference becomes typed failure instead of fake output`() {
         val native = FakeMnnPisaNativeApi(
             inferenceResult = MnnPisaNativeInferenceResult(
@@ -241,6 +279,13 @@ class MnnPisaUpscaleEngineTest {
             outputRowStrideBytes = 0,
             gpuUsed = false,
         ),
+        private val prepareResult: MnnPisaNativePrepareResult = MnnPisaNativePrepareResult(
+            errorCode = MnnPisaNativeError.NOT_IMPLEMENTED,
+            imageWidth = 0,
+            imageHeight = 0,
+            latentWidth = 0,
+            latentHeight = 0,
+        ),
         private val sessionInfo: MnnPisaSessionInfo? = null,
         private val graphInfo: List<MnnPisaTensorInfo>? = null,
         private val throwOnDiagnostics: Boolean = false,
@@ -250,6 +295,7 @@ class MnnPisaUpscaleEngineTest {
         var cancelCalls = 0
         var sessionInfoCalls = 0
         var graphInfoCalls = 0
+        var prepareCalls = 0
 
         override fun loadModel(
             vaeEncoderPath: String,
@@ -276,6 +322,15 @@ class MnnPisaUpscaleEngineTest {
                 error("graph diagnostics unavailable")
             }
             return graphInfo
+        }
+
+        override fun prepareGraph(
+            handle: Long,
+            imageWidth: Int,
+            imageHeight: Int,
+        ): MnnPisaNativePrepareResult {
+            prepareCalls += 1
+            return prepareResult
         }
 
         override fun infer(

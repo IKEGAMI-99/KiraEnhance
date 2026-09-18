@@ -20,6 +20,8 @@ object MnnPisaNativeBridge : MnnPisaNativeApi {
 
     private external fun nativeSessionInfo(handle: Long): String
 
+    private external fun nativeGraphInfo(handle: Long): String
+
     private external fun nativeUnloadModel(handle: Long)
 
     private fun ensureNativeLibraryLoaded() {
@@ -59,6 +61,21 @@ object MnnPisaNativeBridge : MnnPisaNativeApi {
         return runCatching {
             ensureNativeLibraryLoaded()
             MnnPisaSessionInfo.parse(nativeSessionInfo(handle))
+        }.getOrNull()
+    }
+
+    fun graphInfo(handle: Long): List<MnnPisaTensorInfo>? {
+        if (handle == 0L) {
+            return null
+        }
+        return runCatching {
+            ensureNativeLibraryLoaded()
+            val raw = nativeGraphInfo(handle)
+            if (raw.isBlank()) {
+                null
+            } else {
+                MnnPisaTensorInfoCodec.decode(raw)
+            }
         }.getOrNull()
     }
 

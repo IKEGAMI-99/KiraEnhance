@@ -44,6 +44,7 @@ add_library(
     kira_native.cpp
     mnn_runtime_probe.cpp
     mnn_pisa_loader.cpp
+    pisa_latent_math.cpp
 )
 
 target_compile_features(kiraenhance PRIVATE cxx_std_17)

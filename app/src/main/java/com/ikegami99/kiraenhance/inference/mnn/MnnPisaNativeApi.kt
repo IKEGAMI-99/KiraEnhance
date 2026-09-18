@@ -27,6 +27,14 @@ data class MnnPisaNativeInferenceResult(
     val gpuUsed: Boolean,
 )
 
+data class MnnPisaNativePrepareResult(
+    val errorCode: MnnPisaNativeError,
+    val imageWidth: Int,
+    val imageHeight: Int,
+    val latentWidth: Int,
+    val latentHeight: Int,
+)
+
 data class MnnPisaDiagnosticsSnapshot(
     val modelVersion: String,
     val sessionInfo: MnnPisaSessionInfo?,
@@ -45,6 +53,18 @@ interface MnnPisaNativeApi {
     fun sessionInfo(handle: Long): MnnPisaSessionInfo? = null
 
     fun graphInfo(handle: Long): List<MnnPisaTensorInfo>? = null
+
+    fun prepareGraph(
+        handle: Long,
+        imageWidth: Int,
+        imageHeight: Int,
+    ): MnnPisaNativePrepareResult = MnnPisaNativePrepareResult(
+        errorCode = MnnPisaNativeError.NOT_IMPLEMENTED,
+        imageWidth = 0,
+        imageHeight = 0,
+        latentWidth = 0,
+        latentHeight = 0,
+    )
 
     fun infer(
         handle: Long,

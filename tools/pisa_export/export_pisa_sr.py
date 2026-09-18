@@ -67,7 +67,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--device",
         default="cuda",
-        help="PyTorch export device. CUDA is required for the FP16 baseline.",
+        help="PyTorch export device such as cuda, cuda:1, cpu, or mps.",
+    )
+    parser.add_argument(
+        "--export-precision",
+        choices=("auto", "fp16", "fp32"),
+        default="auto",
+        help=(
+            "ONNX tracing precision. auto uses fp16 on CUDA and fp32 on "
+            "CPU/MPS. MNNConvert still stores baseline weights with --fp16."
+        ),
     )
     parser.add_argument(
         "--sample-height",
@@ -88,6 +97,21 @@ def build_parser() -> argparse.ArgumentParser:
         help="ONNX opset version.",
     )
     return parser
+
+
+def resolve_export_precision(device: str, requested: str) -> str:
+    if requested == "auto":
+        return "fp16" if device.startswith("cuda") else "fp32"
+    if requested == "fp32":
+        return "fp32"
+    if requested == "fp16":
+        if not device.startswith("cuda"):
+            raise ValueError(
+                "FP16 ONNX tracing is currently restricted to CUDA; "
+                "use --export-precision fp32 on CPU/MPS"
+            )
+        return "fp16"
+    raise ValueError(f"Unsupported export precision: {requested!r}")
 
 
 def _validate_inputs(args: argparse.Namespace) -> None:
@@ -245,14 +269,22 @@ def load_official_components(
     from src.models.autoencoder_kl import AutoencoderKL
     from src.models.unet_2d_condition import UNet2DConditionModel
 
-    if not device.startswith("cuda"):
+    if device.startswith("cuda"):
+        if not torch.cuda.is_available():
+            raise RuntimeError(
+                f"CUDA export requested via {device!r}, "
+                "but torch.cuda.is_available() is false"
+            )
+    elif device == "mps":
+        mps = getattr(getattr(torch, "backends", None), "mps", None)
+        if mps is None or not mps.is_available():
+            raise RuntimeError(
+                "MPS export requested, but torch.backends.mps.is_available() is false"
+            )
+    elif device != "cpu":
         raise ValueError(
-            "The correctness-first FP16 exporter currently requires a CUDA "
-            "device; CPU FP16 export is intentionally not used."
-        )
-    if not torch.cuda.is_available():
-        raise RuntimeError(
-            f"CUDA export requested via {device!r}, but torch.cuda.is_available() is false"
+            f"Unsupported export device {device!r}; "
+            "use cuda, cuda:N, cpu, or mps"
         )
 
     checkpoint = torch.load(
@@ -288,17 +320,27 @@ def load_official_components(
     return unet, vae, tokenizer, text_encoder
 
 
+def _clear_device_cache(torch: Any, device: str) -> None:
+    if device.startswith("cuda"):
+        torch.cuda.empty_cache()
+    elif device == "mps":
+        mps = getattr(torch, "mps", None)
+        if mps is not None and hasattr(mps, "empty_cache"):
+            mps.empty_cache()
+
+
 def _empty_prompt_embedding(
     torch: Any,
     tokenizer: Any,
     text_encoder: Any,
     *,
     device: str,
+    compute_dtype: Any,
     output_path: pathlib.Path,
 ):
     import numpy as np
 
-    text_encoder.to(device=device, dtype=torch.float16)
+    text_encoder.to(device=device, dtype=compute_dtype)
     tokens = tokenizer(
         "",
         max_length=tokenizer.model_max_length,
@@ -321,7 +363,7 @@ def _empty_prompt_embedding(
 
     text_encoder.to("cpu")
     del input_ids, embedding
-    torch.cuda.empty_cache()
+    _clear_device_cache(torch, device)
     return shape
 
 
@@ -404,12 +446,17 @@ def export_onnx_graphs(
     sample_height: int,
     sample_width: int,
     opset: int,
+    export_precision: str,
 ) -> dict[str, Any]:
     import onnx
     import torch
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    dtype = torch.float16
+    dtype = (
+        torch.float16
+        if export_precision == "fp16"
+        else torch.float32
+    )
     latent_height = sample_height // 8
     latent_width = sample_width // 8
 
@@ -419,6 +466,7 @@ def export_onnx_graphs(
         tokenizer,
         text_encoder,
         device=device,
+        compute_dtype=dtype,
         output_path=empty_prompt_path,
     )
 
@@ -469,7 +517,7 @@ def export_onnx_graphs(
     vae_scaling_factor = float(vae.config.scaling_factor)
     vae.to("cpu")
     del image
-    torch.cuda.empty_cache()
+    _clear_device_cache(torch, device)
 
     unet.to(device=device, dtype=dtype)
     latent = latent.to(device=device, dtype=dtype)
@@ -513,7 +561,7 @@ def export_onnx_graphs(
 
     unet.to("cpu")
     del latent, timestep, encoder_hidden_states
-    torch.cuda.empty_cache()
+    _clear_device_cache(torch, device)
 
     for path in (vae_encoder_path, unet_path, vae_decoder_path):
         onnx.checker.check_model(str(path))
@@ -591,6 +639,10 @@ def convert_to_mnn(
 
 def run(args: argparse.Namespace) -> pathlib.Path:
     _validate_inputs(args)
+    export_precision = resolve_export_precision(
+        args.device,
+        args.export_precision,
+    )
     output_dir = args.output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -611,6 +663,7 @@ def run(args: argparse.Namespace) -> pathlib.Path:
         sample_height=args.sample_height,
         sample_width=args.sample_width,
         opset=args.opset,
+        export_precision=export_precision,
     )
 
     mnnconvert_version, mnn_paths = convert_to_mnn(
@@ -642,6 +695,8 @@ def run(args: argparse.Namespace) -> pathlib.Path:
             "sampleImageShape": export["sampleImageShape"],
             "sampleLatentShape": export["sampleLatentShape"],
             "onnxOpset": args.opset,
+            "exportDevice": args.device,
+            "onnxExportPrecision": export_precision,
             "pisaRepoPath": str(args.pisa_repo.resolve()),
             "pisaRepoCommit": _git_commit(args.pisa_repo),
         },

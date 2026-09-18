@@ -7,6 +7,7 @@ import com.ikegami99.kiraenhance.inference.ModelLoadRequest
 import com.ikegami99.kiraenhance.inference.ModelLoadResult
 import com.ikegami99.kiraenhance.inference.PixelFormat
 import com.ikegami99.kiraenhance.inference.UpscaleInput
+import com.ikegami99.kiraenhance.inference.UpscaleProgress
 import com.ikegami99.kiraenhance.inference.UpscaleResult
 import com.ikegami99.kiraenhance.inference.UpscaleSettings
 import java.io.File

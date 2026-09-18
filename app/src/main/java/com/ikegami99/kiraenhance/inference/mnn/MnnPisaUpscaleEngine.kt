@@ -157,16 +157,49 @@ class MnnPisaUpscaleEngine(
 
         val outputWidthLong = input.width.toLong() * settings.outputScale.toLong()
         val outputHeightLong = input.height.toLong() * settings.outputScale.toLong()
-        if (outputWidthLong > Int.MAX_VALUE || outputHeightLong > Int.MAX_VALUE) {
+        if (
+            outputWidthLong <= 0L ||
+            outputHeightLong <= 0L ||
+            outputWidthLong > Int.MAX_VALUE ||
+            outputHeightLong > Int.MAX_VALUE
+        ) {
             return failed(EngineErrorCode.OUT_OF_MEMORY, "PiSA-SR output dimensions are too large")
         }
+
+        if (
+            input.width < MIN_MONOLITHIC_SOURCE_SIDE ||
+            input.height < MIN_MONOLITHIC_SOURCE_SIDE ||
+            input.width % 2 != 0 ||
+            input.height % 2 != 0
+        ) {
+            return failed(
+                EngineErrorCode.INFERENCE_FAILED,
+                "PiSA-SR exact-size preprocessing for small or odd-sized images is not implemented yet",
+            )
+        }
+
+        if (outputWidthLong > Long.MAX_VALUE / outputHeightLong) {
+            return failed(EngineErrorCode.OUT_OF_MEMORY, "PiSA-SR output dimensions are too large")
+        }
+        val outputPixelsLong = outputWidthLong * outputHeightLong
+        if (outputPixelsLong > MAX_MONOLITHIC_OUTPUT_PIXELS) {
+            return failed(
+                EngineErrorCode.INFERENCE_FAILED,
+                "PiSA-SR large-image tiled inference is not implemented yet",
+            )
+        }
+
         val outputWidth = outputWidthLong.toInt()
         val outputHeight = outputHeightLong.toInt()
         val rowStrideLong = outputWidthLong * BYTES_PER_PIXEL
-        val capacityLong = rowStrideLong * outputHeightLong
-        if (rowStrideLong > Int.MAX_VALUE || capacityLong > Int.MAX_VALUE) {
+        if (
+            rowStrideLong > Int.MAX_VALUE ||
+            rowStrideLong <= 0L ||
+            outputHeightLong > Int.MAX_VALUE.toLong() / rowStrideLong
+        ) {
             return failed(EngineErrorCode.OUT_OF_MEMORY, "PiSA-SR output buffer is too large")
         }
+        val capacityLong = rowStrideLong * outputHeightLong
 
         val outputBuffer = try {
             ByteBuffer.allocateDirect(capacityLong.toInt())
@@ -290,7 +323,7 @@ class MnnPisaUpscaleEngine(
     }
 
     private fun nativeErrorMessage(error: MnnPisaNativeError): String = when (error) {
-        MnnPisaNativeError.NOT_IMPLEMENTED -> "PiSA-SR MNN image inference is not implemented yet"
+        MnnPisaNativeError.NOT_IMPLEMENTED -> "PiSA-SR MNN image path does not support this input yet"
         else -> "MNN PiSA-SR inference failed: $error"
     }
 
@@ -298,5 +331,7 @@ class MnnPisaUpscaleEngine(
         const val MODEL_ID = "pisa-sr"
         const val NATIVE_SCALE = 4
         const val BYTES_PER_PIXEL = 4
+        const val MIN_MONOLITHIC_SOURCE_SIDE = 128
+        const val MAX_MONOLITHIC_OUTPUT_PIXELS = 1024L * 1024L
     }
 }

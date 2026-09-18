@@ -198,6 +198,49 @@ void testGaussianWeightsArePositiveSymmetricAndCenterWeighted() {
     );
 }
 
+void testTilingPolicyUsesTileThreshold() {
+    expectFalse(
+        kira::pisa::requiresTiling(
+            96,
+            96,
+            96
+        ),
+        "exact tile size remains monolithic"
+    );
+    expectFalse(
+        kira::pisa::requiresTiling(
+            80,
+            96,
+            96
+        ),
+        "smaller latent remains monolithic"
+    );
+    expectTrue(
+        kira::pisa::requiresTiling(
+            97,
+            96,
+            96
+        ),
+        "width above tile threshold uses tiling"
+    );
+    expectTrue(
+        kira::pisa::requiresTiling(
+            96,
+            97,
+            96
+        ),
+        "height above tile threshold uses tiling"
+    );
+    expectFalse(
+        kira::pisa::requiresTiling(
+            0,
+            96,
+            96
+        ),
+        "invalid dimensions do not request tiling"
+    );
+}
+
 void testRejectsInvalidGaussianDimensions() {
     std::vector<float> weights;
     expectFalse(
@@ -226,6 +269,7 @@ int main() {
     testClampsTileToSmallerImageSide();
     testRejectsNonProgressingOverlap();
     testGaussianWeightsArePositiveSymmetricAndCenterWeighted();
+    testTilingPolicyUsesTileThreshold();
     testRejectsInvalidGaussianDimensions();
 
     if (failures != 0) {

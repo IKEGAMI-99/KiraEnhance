@@ -168,13 +168,11 @@ class MnnPisaUpscaleEngine(
 
         if (
             input.width < MIN_MONOLITHIC_SOURCE_SIDE ||
-            input.height < MIN_MONOLITHIC_SOURCE_SIDE ||
-            input.width % 2 != 0 ||
-            input.height % 2 != 0
+            input.height < MIN_MONOLITHIC_SOURCE_SIDE
         ) {
             return failed(
                 EngineErrorCode.INFERENCE_FAILED,
-                "PiSA-SR exact-size preprocessing for small or odd-sized images is not implemented yet",
+                "PiSA-SR minimum-size preprocessing is not implemented yet",
             )
         }
 
@@ -185,7 +183,7 @@ class MnnPisaUpscaleEngine(
         if (outputPixelsLong > MAX_MONOLITHIC_OUTPUT_PIXELS) {
             return failed(
                 EngineErrorCode.INFERENCE_FAILED,
-                "PiSA-SR large-image tiled inference is not implemented yet",
+                "PiSA-SR large-image VAE tiled inference is not implemented yet",
             )
         }
 

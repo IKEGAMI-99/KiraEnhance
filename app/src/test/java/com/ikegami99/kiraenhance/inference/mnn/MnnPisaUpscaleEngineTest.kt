@@ -233,6 +233,70 @@ class MnnPisaUpscaleEngineTest {
     }
 
     @Test
+    fun `bounded real inference returns native output metadata`() {
+        val native = FakeMnnPisaNativeApi(
+            inferenceResult = MnnPisaNativeInferenceResult(
+                errorCode = MnnPisaNativeError.NONE,
+                outputWidth = 512,
+                outputHeight = 512,
+                outputRowStrideBytes = 2048,
+                gpuUsed = true,
+            ),
+        )
+        val engine = MnnPisaUpscaleEngine(native)
+        assertTrue(engine.load(request()) is ModelLoadResult.Loaded)
+
+        val result = engine.upscale(
+            input = UpscaleInput(
+                width = 128,
+                height = 128,
+                rowStrideBytes = 512,
+                pixelFormat = PixelFormat.RGBA_8888,
+                pixels = ByteBuffer.allocateDirect(128 * 128 * 4),
+            ),
+            settings = UpscaleSettings(outputScale = 4),
+        )
+
+        assertTrue(result is UpscaleResult.Success)
+        val success = result as UpscaleResult.Success
+        assertEquals(512, success.output.width)
+        assertEquals(512, success.output.height)
+        assertEquals(2048, success.output.rowStrideBytes)
+        assertTrue(success.usedGpu)
+        assertEquals(1, native.inferCalls)
+        assertEquals(
+            UpscaleProgress(completedTiles = 1, totalTiles = 1),
+            engine.progress(),
+        )
+    }
+
+    @Test
+    fun `large PiSA input is rejected before native allocation path`() {
+        val native = FakeMnnPisaNativeApi()
+        val engine = MnnPisaUpscaleEngine(native)
+        assertTrue(engine.load(request()) is ModelLoadResult.Loaded)
+
+        val result = engine.upscale(
+            input = UpscaleInput(
+                width = 512,
+                height = 512,
+                rowStrideBytes = 2048,
+                pixelFormat = PixelFormat.RGBA_8888,
+                pixels = ByteBuffer.allocateDirect(512 * 512 * 4),
+            ),
+            settings = UpscaleSettings(outputScale = 4),
+        )
+
+        assertTrue(result is UpscaleResult.Failed)
+        assertEquals(
+            EngineErrorCode.INFERENCE_FAILED,
+            (result as UpscaleResult.Failed).error.code,
+        )
+        assertTrue(result.error.message.contains("tiled inference"))
+        assertEquals(0, native.inferCalls)
+    }
+
+    @Test
     fun `not implemented inference becomes typed failure instead of fake output`() {
         val native = FakeMnnPisaNativeApi(
             inferenceResult = MnnPisaNativeInferenceResult(
@@ -248,11 +312,11 @@ class MnnPisaUpscaleEngineTest {
 
         val result = engine.upscale(
             input = UpscaleInput(
-                width = 1,
-                height = 1,
-                rowStrideBytes = 4,
+                width = 128,
+                height = 128,
+                rowStrideBytes = 512,
                 pixelFormat = PixelFormat.RGBA_8888,
-                pixels = ByteBuffer.allocateDirect(4),
+                pixels = ByteBuffer.allocateDirect(128 * 128 * 4),
             ),
             settings = UpscaleSettings(outputScale = 4),
         )
@@ -338,6 +402,7 @@ class MnnPisaUpscaleEngineTest {
         var graphInfoCalls = 0
         var prepareCalls = 0
         var smokeCalls = 0
+        var inferCalls = 0
 
         override fun loadModel(
             vaeEncoderPath: String,
@@ -392,7 +457,10 @@ class MnnPisaUpscaleEngineTest {
             inputRowStrideBytes: Int,
             outputPixels: ByteBuffer,
             outputCapacityBytes: Long,
-        ): MnnPisaNativeInferenceResult = inferenceResult
+        ): MnnPisaNativeInferenceResult {
+            inferCalls += 1
+            return inferenceResult
+        }
 
         override fun unload(handle: Long) {
             unloadCalls += 1

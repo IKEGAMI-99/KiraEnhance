@@ -4,6 +4,9 @@
 
 #include "pisa_half.h"
 
+#include <MNN/ImageProcess.hpp>
+#include <MNN/Matrix.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -113,6 +116,80 @@ TensorIoScalarType tensorScalarType(const MNN::Tensor* tensor) {
         return TensorIoScalarType::INT64;
     }
     return TensorIoScalarType::UNSUPPORTED;
+}
+
+bool writeRgba8888BicubicNormalizedTensor(
+    MNN::Tensor* tensor,
+    const std::uint8_t* rgba,
+    int sourceWidth,
+    int sourceHeight,
+    int rowStrideBytes
+) {
+    if (
+        tensor == nullptr ||
+        rgba == nullptr ||
+        sourceWidth <= 1 ||
+        sourceHeight <= 1 ||
+        sourceWidth > std::numeric_limits<int>::max() / 4 ||
+        rowStrideBytes < sourceWidth * 4
+    ) {
+        return false;
+    }
+
+    const std::vector<int> shape = tensor->shape();
+    if (
+        shape.size() != 4 ||
+        shape[0] != 1 ||
+        shape[1] != 3 ||
+        shape[2] <= 1 ||
+        shape[3] <= 1
+    ) {
+        return false;
+    }
+
+    const TensorIoScalarType scalarType = tensorScalarType(tensor);
+    if (
+        scalarType != TensorIoScalarType::FLOAT16 &&
+        scalarType != TensorIoScalarType::FLOAT32
+    ) {
+        return false;
+    }
+
+    MNN::CV::ImageProcess::Config config;
+    config.filterType = MNN::CV::BICUBIC;
+    config.sourceFormat = MNN::CV::RGBA;
+    config.destFormat = MNN::CV::RGB;
+    for (int channel = 0; channel < 3; ++channel) {
+        config.mean[channel] = 127.5f;
+        config.normal[channel] = 1.0f / 127.5f;
+    }
+
+    MNN::CV::ImageProcess* process =
+        MNN::CV::ImageProcess::create(config, tensor);
+    if (process == nullptr) {
+        return false;
+    }
+
+    const int targetHeight = shape[2];
+    const int targetWidth = shape[3];
+    MNN::CV::Matrix transform;
+    transform.setScale(
+        static_cast<float>(sourceWidth - 1) /
+            static_cast<float>(targetWidth - 1),
+        static_cast<float>(sourceHeight - 1) /
+            static_cast<float>(targetHeight - 1)
+    );
+    process->setMatrix(transform);
+
+    const MNN::ErrorCode result = process->convert(
+        rgba,
+        sourceWidth,
+        sourceHeight,
+        rowStrideBytes,
+        tensor
+    );
+    MNN::CV::ImageProcess::destroy(process);
+    return result == MNN::NO_ERROR;
 }
 
 bool writeFloatNchwTensor(

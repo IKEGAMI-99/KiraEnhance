@@ -1,7 +1,12 @@
 #include <jni.h>
 
+#include "mnn_pisa_tensor_io.h"
+#include "pisa_denoise_math.h"
+#include "pisa_gaussian_noise.h"
+#include "pisa_latent_math.h"
 #include "pisa_resize_plan.h"
 
+#include <cmath>
 #include <cstdint>
 #include <fstream>
 #include <limits>
@@ -19,6 +24,9 @@ namespace {
 
 constexpr std::size_t EMPTY_PROMPT_FP16_BYTES =
     static_cast<std::size_t>(1) * 77 * 1024 * 2;
+constexpr float VAE_SCALING_FACTOR = 0.18215f;
+constexpr std::int64_t PISA_TIMESTEP = 1;
+constexpr std::uint64_t SMOKE_NOISE_SEED = 0x50495341534d4f4bULL;
 
 enum class NativeError : jlong {
     NONE = 0,
@@ -72,6 +80,26 @@ jlongArray makePrepareResult(
         static_cast<jlong>(latentHeight),
     };
     env->SetLongArrayRegion(result, 0, 5, values);
+    return result;
+}
+
+jlongArray makeSmokeResult(
+    JNIEnv* env,
+    NativeError error,
+    jint completedStages = 0,
+    bool outputFinite = false
+) {
+    jlongArray result = env->NewLongArray(3);
+    if (result == nullptr) {
+        return nullptr;
+    }
+
+    const jlong values[3] = {
+        static_cast<jlong>(error),
+        static_cast<jlong>(completedStages),
+        outputFinite ? 1L : 0L,
+    };
+    env->SetLongArrayRegion(result, 0, 3, values);
     return result;
 }
 
@@ -555,6 +583,261 @@ bool preparePisaGraph(
     );
 }
 
+bool checkedElementCount(
+    std::initializer_list<std::size_t> dimensions,
+    std::size_t& output
+) {
+    std::size_t count = 1;
+    for (std::size_t dimension : dimensions) {
+        if (
+            dimension == 0 ||
+            count > std::numeric_limits<std::size_t>::max() / dimension
+        ) {
+            return false;
+        }
+        count *= dimension;
+    }
+    output = count;
+    return true;
+}
+
+NativeError mapMnnRunError(MNN::ErrorCode error) {
+    switch (error) {
+        case MNN::NO_ERROR:
+            return NativeError::NONE;
+        case MNN::OUT_OF_MEMORY:
+            return NativeError::OUT_OF_MEMORY;
+        default:
+            return NativeError::INFERENCE_FAILED;
+    }
+}
+
+NativeError runPisaSmoke(
+    PisaModelBundle& bundle,
+    int imageWidth,
+    int imageHeight,
+    int& completedStages,
+    bool& outputFinite
+) {
+    completedStages = 0;
+    outputFinite = false;
+
+    int latentWidth = 0;
+    int latentHeight = 0;
+    if (!preparePisaGraph(
+        bundle,
+        imageWidth,
+        imageHeight,
+        latentWidth,
+        latentHeight
+    )) {
+        return NativeError::LOAD_FAILED;
+    }
+
+    std::size_t imageCount = 0;
+    std::size_t momentsCount = 0;
+    std::size_t latentCount = 0;
+    if (
+        !checkedElementCount(
+            {
+                3U,
+                static_cast<std::size_t>(imageHeight),
+                static_cast<std::size_t>(imageWidth),
+            },
+            imageCount
+        ) ||
+        !checkedElementCount(
+            {
+                8U,
+                static_cast<std::size_t>(latentHeight),
+                static_cast<std::size_t>(latentWidth),
+            },
+            momentsCount
+        ) ||
+        !checkedElementCount(
+            {
+                4U,
+                static_cast<std::size_t>(latentHeight),
+                static_cast<std::size_t>(latentWidth),
+            },
+            latentCount
+        )
+    ) {
+        return NativeError::OUT_OF_MEMORY;
+    }
+
+    try {
+        std::vector<float> image(imageCount, 0.0f);
+        std::vector<float> moments(momentsCount);
+        std::vector<float> noise(latentCount);
+        std::vector<float> controlLatent(latentCount);
+        std::vector<float> modelPrediction(latentCount);
+        std::vector<float> decodedImage(imageCount);
+
+        MNN::Tensor* encoderInput =
+            bundle.vaeEncoder->getSessionInput(
+                bundle.vaeEncoderSession,
+                "image"
+            );
+        if (
+            !kira::pisa::writeFloatNchwTensor(
+                encoderInput,
+                image.data(),
+                image.size()
+            )
+        ) {
+            return NativeError::INFERENCE_FAILED;
+        }
+
+        const MNN::ErrorCode encoderRun =
+            bundle.vaeEncoder->runSession(bundle.vaeEncoderSession);
+        if (encoderRun != MNN::NO_ERROR) {
+            return mapMnnRunError(encoderRun);
+        }
+        completedStages = 1;
+
+        const MNN::Tensor* encoderOutput =
+            bundle.vaeEncoder->getSessionOutput(
+                bundle.vaeEncoderSession,
+                "moments"
+            );
+        if (
+            !kira::pisa::readFloatNchwTensor(
+                encoderOutput,
+                moments.data(),
+                moments.size()
+            ) ||
+            !kira::pisa::fillGaussianNoise(
+                noise.data(),
+                noise.size(),
+                SMOKE_NOISE_SEED
+            ) ||
+            !kira::pisa::sampleLatentFromMoments(
+                moments.data(),
+                noise.data(),
+                controlLatent.data(),
+                1,
+                4,
+                latentHeight,
+                latentWidth,
+                VAE_SCALING_FACTOR
+            )
+        ) {
+            return NativeError::INFERENCE_FAILED;
+        }
+
+        MNN::Tensor* unetLatent =
+            bundle.unet->getSessionInput(
+                bundle.unetSession,
+                "latent"
+            );
+        MNN::Tensor* unetTimestep =
+            bundle.unet->getSessionInput(
+                bundle.unetSession,
+                "timestep"
+            );
+        MNN::Tensor* unetPrompt =
+            bundle.unet->getSessionInput(
+                bundle.unetSession,
+                "encoder_hidden_states"
+            );
+        if (
+            !kira::pisa::writeFloatNchwTensor(
+                unetLatent,
+                controlLatent.data(),
+                controlLatent.size()
+            ) ||
+            !kira::pisa::writeIntScalarTensor(
+                unetTimestep,
+                PISA_TIMESTEP
+            ) ||
+            !kira::pisa::writeFp16BytesNchwTensor(
+                unetPrompt,
+                bundle.emptyPrompt.get(),
+                bundle.emptyPromptBytes
+            )
+        ) {
+            return NativeError::INFERENCE_FAILED;
+        }
+
+        const MNN::ErrorCode unetRun =
+            bundle.unet->runSession(bundle.unetSession);
+        if (unetRun != MNN::NO_ERROR) {
+            return mapMnnRunError(unetRun);
+        }
+        completedStages = 2;
+
+        const MNN::Tensor* unetOutput =
+            bundle.unet->getSessionOutput(
+                bundle.unetSession,
+                "model_pred"
+            );
+        if (
+            !kira::pisa::readFloatNchwTensor(
+                unetOutput,
+                modelPrediction.data(),
+                modelPrediction.size()
+            ) ||
+            !kira::pisa::buildDecoderLatent(
+                controlLatent.data(),
+                modelPrediction.data(),
+                controlLatent.data(),
+                controlLatent.size(),
+                VAE_SCALING_FACTOR
+            )
+        ) {
+            return NativeError::INFERENCE_FAILED;
+        }
+
+        MNN::Tensor* decoderInput =
+            bundle.vaeDecoder->getSessionInput(
+                bundle.vaeDecoderSession,
+                "latent"
+            );
+        if (
+            !kira::pisa::writeFloatNchwTensor(
+                decoderInput,
+                controlLatent.data(),
+                controlLatent.size()
+            )
+        ) {
+            return NativeError::INFERENCE_FAILED;
+        }
+
+        const MNN::ErrorCode decoderRun =
+            bundle.vaeDecoder->runSession(bundle.vaeDecoderSession);
+        if (decoderRun != MNN::NO_ERROR) {
+            return mapMnnRunError(decoderRun);
+        }
+        completedStages = 3;
+
+        const MNN::Tensor* decoderOutput =
+            bundle.vaeDecoder->getSessionOutput(
+                bundle.vaeDecoderSession,
+                "image"
+            );
+        if (
+            !kira::pisa::readFloatNchwTensor(
+                decoderOutput,
+                decodedImage.data(),
+                decodedImage.size()
+            )
+        ) {
+            return NativeError::INFERENCE_FAILED;
+        }
+
+        for (float value : decodedImage) {
+            if (!std::isfinite(value)) {
+                return NativeError::INFERENCE_FAILED;
+            }
+        }
+        outputFinite = true;
+        return NativeError::NONE;
+    } catch (const std::bad_alloc&) {
+        return NativeError::OUT_OF_MEMORY;
+    }
+}
+
 bool appendGraphInfo(
     std::string& output,
     const char* graph,
@@ -760,6 +1043,55 @@ Java_com_ikegami99_kiraenhance_inference_mnn_MnnPisaNativeBridge_nativePrepareGr
     (void)imageWidth;
     (void)imageHeight;
     return makePrepareResult(env, NativeError::NOT_IMPLEMENTED);
+#endif
+}
+
+extern "C" JNIEXPORT jlongArray JNICALL
+Java_com_ikegami99_kiraenhance_inference_mnn_MnnPisaNativeBridge_nativeSmokeGraph(
+    JNIEnv* env,
+    jobject /* thiz */,
+    jlong handle,
+    jint imageWidth,
+    jint imageHeight
+) {
+#if KIRA_HAS_MNN
+    if (
+        handle == 0L ||
+        imageWidth <= 0 ||
+        imageHeight <= 0 ||
+        imageWidth % 8 != 0 ||
+        imageHeight % 8 != 0
+    ) {
+        return makeSmokeResult(env, NativeError::INVALID_ARGUMENT);
+    }
+
+    auto* bundle = reinterpret_cast<PisaModelBundle*>(
+        static_cast<std::intptr_t>(handle)
+    );
+    if (bundle == nullptr) {
+        return makeSmokeResult(env, NativeError::INVALID_ARGUMENT);
+    }
+
+    int completedStages = 0;
+    bool outputFinite = false;
+    const NativeError result = runPisaSmoke(
+        *bundle,
+        imageWidth,
+        imageHeight,
+        completedStages,
+        outputFinite
+    );
+    return makeSmokeResult(
+        env,
+        result,
+        completedStages,
+        outputFinite
+    );
+#else
+    (void)handle;
+    (void)imageWidth;
+    (void)imageHeight;
+    return makeSmokeResult(env, NativeError::NOT_IMPLEMENTED);
 #endif
 }
 

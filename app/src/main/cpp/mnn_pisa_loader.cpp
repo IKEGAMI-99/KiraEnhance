@@ -1,5 +1,7 @@
 #include <jni.h>
 
+#include "pisa_resize_plan.h"
+
 #include <cstdint>
 #include <fstream>
 #include <limits>
@@ -814,8 +816,45 @@ Java_com_ikegami99_kiraenhance_inference_mnn_MnnPisaNativeBridge_nativeInfer(
         return makeInferenceResult(env, NativeError::INVALID_ARGUMENT);
     }
 
+    kira::pisa::ResizePlan resizePlan;
+    if (!kira::pisa::buildResizePlan(width, height, resizePlan)) {
+        return makeInferenceResult(env, NativeError::INVALID_ARGUMENT);
+    }
+
+    const jlong requiredOutputBytes =
+        static_cast<jlong>(resizePlan.outputWidth) *
+        static_cast<jlong>(resizePlan.outputHeight) *
+        4L;
+    if (
+        requiredOutputBytes <= 0 ||
+        outputCapacityBytes < requiredOutputBytes
+    ) {
+        return makeInferenceResult(env, NativeError::INVALID_ARGUMENT);
+    }
+
+    int latentWidth = 0;
+    int latentHeight = 0;
+    if (!preparePisaGraph(
+        *bundle,
+        resizePlan.modelWidth,
+        resizePlan.modelHeight,
+        latentWidth,
+        latentHeight
+    )) {
+        return makeInferenceResult(
+            env,
+            NativeError::LOAD_FAILED,
+            0,
+            0,
+            0,
+            isGpuBackend(bundle->backend)
+        );
+    }
+
     (void)inputData;
     (void)outputData;
+    (void)latentWidth;
+    (void)latentHeight;
     return makeInferenceResult(
         env,
         NativeError::NOT_IMPLEMENTED,

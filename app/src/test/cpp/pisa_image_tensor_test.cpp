@@ -91,6 +91,87 @@ void testNchwToRgbaClampsAndWritesOpaqueAlpha() {
     expectByte(rgba[7], 255, "opaque alpha one");
 }
 
+void testPlanarBilinearResizePreservesIdentity() {
+    const float input[] = {
+        0.0f, 1.0f,
+        2.0f, 3.0f,
+
+        10.0f, 11.0f,
+        12.0f, 13.0f,
+    };
+    float output[8] = {};
+
+    expectTrue(
+        kira::pisa::resizePlanarBilinear(
+            input,
+            2,
+            2,
+            2,
+            output,
+            2,
+            2,
+            8
+        ),
+        "identity planar resize succeeds"
+    );
+
+    for (std::size_t index = 0; index < 8; ++index) {
+        expectNear(
+            output[index],
+            input[index],
+            1.0e-6f,
+            "identity planar resize value"
+        );
+    }
+}
+
+void testPlanarBilinearResizeInterpolatesCornersAndCenter() {
+    const float input[] = {
+        0.0f, 2.0f,
+        4.0f, 6.0f,
+    };
+    float output[9] = {};
+
+    expectTrue(
+        kira::pisa::resizePlanarBilinear(
+            input,
+            1,
+            2,
+            2,
+            output,
+            3,
+            3,
+            9
+        ),
+        "interpolated planar resize succeeds"
+    );
+
+    expectNear(output[0], 0.0f, 1.0e-6f, "top-left preserved");
+    expectNear(output[2], 2.0f, 1.0e-6f, "top-right preserved");
+    expectNear(output[6], 4.0f, 1.0e-6f, "bottom-left preserved");
+    expectNear(output[8], 6.0f, 1.0e-6f, "bottom-right preserved");
+    expectNear(output[4], 3.0f, 1.0e-6f, "center interpolated");
+}
+
+void testPlanarBilinearResizeRejectsShortOutput() {
+    const float input[4] = {};
+    float output[8] = {};
+
+    expectFalse(
+        kira::pisa::resizePlanarBilinear(
+            input,
+            1,
+            2,
+            2,
+            output,
+            3,
+            3,
+            8
+        ),
+        "short planar resize output rejected"
+    );
+}
+
 void testRejectsInvalidBuffersAndDimensions() {
     const std::uint8_t pixel[4] = {};
     float tensor[3] = {};
@@ -133,6 +214,9 @@ void testRejectsInvalidBuffersAndDimensions() {
 int main() {
     testRgbaToNchwUsesRgbAndRespectsStride();
     testNchwToRgbaClampsAndWritesOpaqueAlpha();
+    testPlanarBilinearResizePreservesIdentity();
+    testPlanarBilinearResizeInterpolatesCornersAndCenter();
+    testPlanarBilinearResizeRejectsShortOutput();
     testRejectsInvalidBuffersAndDimensions();
 
     if (failures != 0) {

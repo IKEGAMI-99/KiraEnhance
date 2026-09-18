@@ -622,40 +622,18 @@ NativeError mapMnnRunError(MNN::ErrorCode error) {
     }
 }
 
-NativeError runPisaSmoke(
+NativeError runPisaPreparedGraph(
     PisaModelBundle& bundle,
-    int imageWidth,
-    int imageHeight,
-    int& completedStages,
-    bool& outputFinite
+    int latentWidth,
+    int latentHeight,
+    std::uint64_t noiseSeed,
+    int& completedStages
 ) {
     completedStages = 0;
-    outputFinite = false;
 
-    int latentWidth = 0;
-    int latentHeight = 0;
-    if (!preparePisaGraph(
-        bundle,
-        imageWidth,
-        imageHeight,
-        latentWidth,
-        latentHeight
-    )) {
-        return NativeError::LOAD_FAILED;
-    }
-
-    std::size_t imageCount = 0;
     std::size_t momentsCount = 0;
     std::size_t latentCount = 0;
     if (
-        !checkedElementCount(
-            {
-                3U,
-                static_cast<std::size_t>(imageHeight),
-                static_cast<std::size_t>(imageWidth),
-            },
-            imageCount
-        ) ||
         !checkedElementCount(
             {
                 8U,
@@ -688,34 +666,13 @@ NativeError runPisaSmoke(
     std::unique_ptr<float[]> modelPrediction(
         new (std::nothrow) float[latentCount]
     );
-    std::unique_ptr<float[]> decodedImage(
-        new (std::nothrow) float[imageCount]
-    );
     if (
         !moments ||
         !noise ||
         !controlLatent ||
-        !modelPrediction ||
-        !decodedImage
+        !modelPrediction
     ) {
         return NativeError::OUT_OF_MEMORY;
-    }
-
-    MNN::Tensor* encoderInput =
-        bundle.vaeEncoder->getSessionInput(
-            bundle.vaeEncoderSession,
-            "image"
-        );
-    if (
-        !kira::pisa::writeRgba8888BicubicNormalizedTensor(
-            encoderInput,
-            SMOKE_SOURCE_RGBA,
-            SMOKE_SOURCE_WIDTH,
-            SMOKE_SOURCE_HEIGHT,
-            SMOKE_SOURCE_STRIDE
-        )
-    ) {
-        return NativeError::INFERENCE_FAILED;
     }
 
     const MNN::ErrorCode encoderRun =
@@ -739,7 +696,7 @@ NativeError runPisaSmoke(
         !kira::pisa::fillGaussianNoise(
             noise.get(),
             latentCount,
-            SMOKE_NOISE_SEED
+            noiseSeed
         ) ||
         !kira::pisa::sampleLatentFromMoments(
             moments.get(),
@@ -839,6 +796,79 @@ NativeError runPisaSmoke(
         return mapMnnRunError(decoderRun);
     }
     completedStages = 3;
+    return NativeError::NONE;
+}
+
+NativeError runPisaSmoke(
+    PisaModelBundle& bundle,
+    int imageWidth,
+    int imageHeight,
+    int& completedStages,
+    bool& outputFinite
+) {
+    completedStages = 0;
+    outputFinite = false;
+
+    int latentWidth = 0;
+    int latentHeight = 0;
+    if (!preparePisaGraph(
+        bundle,
+        imageWidth,
+        imageHeight,
+        latentWidth,
+        latentHeight
+    )) {
+        return NativeError::LOAD_FAILED;
+    }
+
+    std::size_t imageCount = 0;
+    if (
+        !checkedElementCount(
+            {
+                3U,
+                static_cast<std::size_t>(imageHeight),
+                static_cast<std::size_t>(imageWidth),
+            },
+            imageCount
+        )
+    ) {
+        return NativeError::OUT_OF_MEMORY;
+    }
+
+    std::unique_ptr<float[]> decodedImage(
+        new (std::nothrow) float[imageCount]
+    );
+    if (!decodedImage) {
+        return NativeError::OUT_OF_MEMORY;
+    }
+
+    MNN::Tensor* encoderInput =
+        bundle.vaeEncoder->getSessionInput(
+            bundle.vaeEncoderSession,
+            "image"
+        );
+    if (
+        !kira::pisa::writeRgba8888BicubicNormalizedTensor(
+            encoderInput,
+            SMOKE_SOURCE_RGBA,
+            SMOKE_SOURCE_WIDTH,
+            SMOKE_SOURCE_HEIGHT,
+            SMOKE_SOURCE_STRIDE
+        )
+    ) {
+        return NativeError::INFERENCE_FAILED;
+    }
+
+    const NativeError graphResult = runPisaPreparedGraph(
+        bundle,
+        latentWidth,
+        latentHeight,
+        SMOKE_NOISE_SEED,
+        completedStages
+    );
+    if (graphResult != NativeError::NONE) {
+        return graphResult;
+    }
 
     const MNN::Tensor* decoderOutput =
         bundle.vaeDecoder->getSessionOutput(

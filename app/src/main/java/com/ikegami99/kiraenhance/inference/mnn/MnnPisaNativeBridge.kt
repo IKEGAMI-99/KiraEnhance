@@ -18,6 +18,8 @@ object MnnPisaNativeBridge : MnnPisaNativeApi {
         preferGpu: Boolean,
     ): LongArray
 
+    private external fun nativeSessionInfo(handle: Long): String
+
     private external fun nativeUnloadModel(handle: Long)
 
     private fun ensureNativeLibraryLoaded() {
@@ -48,6 +50,16 @@ object MnnPisaNativeBridge : MnnPisaNativeApi {
         )
     }.getOrElse {
         nativeLoadFailure()
+    }
+
+    fun sessionInfo(handle: Long): MnnPisaSessionInfo? {
+        if (handle == 0L) {
+            return null
+        }
+        return runCatching {
+            ensureNativeLibraryLoaded()
+            MnnPisaSessionInfo.parse(nativeSessionInfo(handle))
+        }.getOrNull()
     }
 
     override fun infer(

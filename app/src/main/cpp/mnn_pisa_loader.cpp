@@ -290,6 +290,19 @@ bool isGpuBackend(MNNForwardType backend) {
     return backend == MNN_FORWARD_OPENCL || backend == MNN_FORWARD_VULKAN;
 }
 
+const char* sessionInfoForBackend(MNNForwardType backend) {
+    switch (backend) {
+        case MNN_FORWARD_OPENCL:
+            return "backend=opencl;gpu=1";
+        case MNN_FORWARD_VULKAN:
+            return "backend=vulkan;gpu=1";
+        case MNN_FORWARD_CPU:
+            return "backend=cpu;gpu=0";
+        default:
+            return "";
+    }
+}
+
 #endif
 
 }  // namespace
@@ -369,6 +382,27 @@ Java_com_ikegami99_kiraenhance_inference_mnn_MnnPisaNativeBridge_nativeLoadModel
 #else
     (void)preferGpu;
     return makeLoadResult(env, 0L, NativeError::LOAD_FAILED, false);
+#endif
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_ikegami99_kiraenhance_inference_mnn_MnnPisaNativeBridge_nativeSessionInfo(
+    JNIEnv* env,
+    jobject /* thiz */,
+    jlong handle
+) {
+#if KIRA_HAS_MNN
+    if (handle == 0L) {
+        return env->NewStringUTF("");
+    }
+
+    auto* bundle = reinterpret_cast<PisaModelBundle*>(
+        static_cast<std::intptr_t>(handle)
+    );
+    return env->NewStringUTF(sessionInfoForBackend(bundle->backend));
+#else
+    (void)handle;
+    return env->NewStringUTF("");
 #endif
 }
 

@@ -191,7 +191,7 @@ class MnnPisaUpscaleEngineTest {
     }
 
     @Test
-    fun `default native bridge explicitly reports inference not implemented`() {
+    fun `default native bridge maps unavailable JNI to internal failure on host JVM`() {
         val result = MnnPisaNativeBridge.infer(
             handle = 1L,
             inputPixels = ByteBuffer.allocateDirect(4),
@@ -202,7 +202,7 @@ class MnnPisaUpscaleEngineTest {
             outputCapacityBytes = 64,
         )
 
-        assertEquals(MnnPisaNativeError.NOT_IMPLEMENTED, result.errorCode)
+        assertEquals(MnnPisaNativeError.INTERNAL, result.errorCode)
         assertEquals(0, result.outputWidth)
         assertEquals(0, result.outputHeight)
     }

@@ -62,6 +62,17 @@ jobs:
             -o "$RUNNER_TEMP/pisa_resize_plan_test"
           "$RUNNER_TEMP/pisa_resize_plan_test"
 
+      - name: Test PiSA AdaIN color alignment
+        shell: bash
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror \
+            -Iapp/src/main/cpp \
+            app/src/test/cpp/pisa_adain_test.cpp \
+            app/src/main/cpp/pisa_adain.cpp \
+            -o "$RUNNER_TEMP/pisa_adain_test"
+          "$RUNNER_TEMP/pisa_adain_test"
+
       - name: Test PiSA denoise math
         shell: bash
         run: |

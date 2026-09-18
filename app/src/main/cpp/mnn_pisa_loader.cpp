@@ -9,6 +9,7 @@
 #include <cmath>
 #include <cstdint>
 #include <fstream>
+#include <initializer_list>
 #include <limits>
 #include <memory>
 #include <new>

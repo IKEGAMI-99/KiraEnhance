@@ -47,6 +47,7 @@ add_library(
     pisa_latent_math.cpp
     pisa_gaussian_noise.cpp
     pisa_image_tensor.cpp
+    pisa_resize_plan.cpp
 )
 
 target_compile_features(kiraenhance PRIVATE cxx_std_17)

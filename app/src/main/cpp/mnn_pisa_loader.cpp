@@ -667,176 +667,194 @@ NativeError runPisaSmoke(
         return NativeError::OUT_OF_MEMORY;
     }
 
-    try {
-        std::vector<float> image(imageCount, 0.0f);
-        std::vector<float> moments(momentsCount);
-        std::vector<float> noise(latentCount);
-        std::vector<float> controlLatent(latentCount);
-        std::vector<float> modelPrediction(latentCount);
-        std::vector<float> decodedImage(imageCount);
-
-        MNN::Tensor* encoderInput =
-            bundle.vaeEncoder->getSessionInput(
-                bundle.vaeEncoderSession,
-                "image"
-            );
-        if (
-            !kira::pisa::writeFloatNchwTensor(
-                encoderInput,
-                image.data(),
-                image.size()
-            )
-        ) {
-            return NativeError::INFERENCE_FAILED;
-        }
-
-        const MNN::ErrorCode encoderRun =
-            bundle.vaeEncoder->runSession(bundle.vaeEncoderSession);
-        if (encoderRun != MNN::NO_ERROR) {
-            return mapMnnRunError(encoderRun);
-        }
-        completedStages = 1;
-
-        const MNN::Tensor* encoderOutput =
-            bundle.vaeEncoder->getSessionOutput(
-                bundle.vaeEncoderSession,
-                "moments"
-            );
-        if (
-            !kira::pisa::readFloatNchwTensor(
-                encoderOutput,
-                moments.data(),
-                moments.size()
-            ) ||
-            !kira::pisa::fillGaussianNoise(
-                noise.data(),
-                noise.size(),
-                SMOKE_NOISE_SEED
-            ) ||
-            !kira::pisa::sampleLatentFromMoments(
-                moments.data(),
-                noise.data(),
-                controlLatent.data(),
-                1,
-                4,
-                latentHeight,
-                latentWidth,
-                VAE_SCALING_FACTOR
-            )
-        ) {
-            return NativeError::INFERENCE_FAILED;
-        }
-
-        MNN::Tensor* unetLatent =
-            bundle.unet->getSessionInput(
-                bundle.unetSession,
-                "latent"
-            );
-        MNN::Tensor* unetTimestep =
-            bundle.unet->getSessionInput(
-                bundle.unetSession,
-                "timestep"
-            );
-        MNN::Tensor* unetPrompt =
-            bundle.unet->getSessionInput(
-                bundle.unetSession,
-                "encoder_hidden_states"
-            );
-        if (
-            !kira::pisa::writeFloatNchwTensor(
-                unetLatent,
-                controlLatent.data(),
-                controlLatent.size()
-            ) ||
-            !kira::pisa::writeIntScalarTensor(
-                unetTimestep,
-                PISA_TIMESTEP
-            ) ||
-            !kira::pisa::writeFp16BytesNchwTensor(
-                unetPrompt,
-                bundle.emptyPrompt.get(),
-                bundle.emptyPromptBytes
-            )
-        ) {
-            return NativeError::INFERENCE_FAILED;
-        }
-
-        const MNN::ErrorCode unetRun =
-            bundle.unet->runSession(bundle.unetSession);
-        if (unetRun != MNN::NO_ERROR) {
-            return mapMnnRunError(unetRun);
-        }
-        completedStages = 2;
-
-        const MNN::Tensor* unetOutput =
-            bundle.unet->getSessionOutput(
-                bundle.unetSession,
-                "model_pred"
-            );
-        if (
-            !kira::pisa::readFloatNchwTensor(
-                unetOutput,
-                modelPrediction.data(),
-                modelPrediction.size()
-            ) ||
-            !kira::pisa::buildDecoderLatent(
-                controlLatent.data(),
-                modelPrediction.data(),
-                controlLatent.data(),
-                controlLatent.size(),
-                VAE_SCALING_FACTOR
-            )
-        ) {
-            return NativeError::INFERENCE_FAILED;
-        }
-
-        MNN::Tensor* decoderInput =
-            bundle.vaeDecoder->getSessionInput(
-                bundle.vaeDecoderSession,
-                "latent"
-            );
-        if (
-            !kira::pisa::writeFloatNchwTensor(
-                decoderInput,
-                controlLatent.data(),
-                controlLatent.size()
-            )
-        ) {
-            return NativeError::INFERENCE_FAILED;
-        }
-
-        const MNN::ErrorCode decoderRun =
-            bundle.vaeDecoder->runSession(bundle.vaeDecoderSession);
-        if (decoderRun != MNN::NO_ERROR) {
-            return mapMnnRunError(decoderRun);
-        }
-        completedStages = 3;
-
-        const MNN::Tensor* decoderOutput =
-            bundle.vaeDecoder->getSessionOutput(
-                bundle.vaeDecoderSession,
-                "image"
-            );
-        if (
-            !kira::pisa::readFloatNchwTensor(
-                decoderOutput,
-                decodedImage.data(),
-                decodedImage.size()
-            )
-        ) {
-            return NativeError::INFERENCE_FAILED;
-        }
-
-        for (float value : decodedImage) {
-            if (!std::isfinite(value)) {
-                return NativeError::INFERENCE_FAILED;
-            }
-        }
-        outputFinite = true;
-        return NativeError::NONE;
-    } catch (const std::bad_alloc&) {
+    std::unique_ptr<float[]> image(
+        new (std::nothrow) float[imageCount]()
+    );
+    std::unique_ptr<float[]> moments(
+        new (std::nothrow) float[momentsCount]
+    );
+    std::unique_ptr<float[]> noise(
+        new (std::nothrow) float[latentCount]
+    );
+    std::unique_ptr<float[]> controlLatent(
+        new (std::nothrow) float[latentCount]
+    );
+    std::unique_ptr<float[]> modelPrediction(
+        new (std::nothrow) float[latentCount]
+    );
+    std::unique_ptr<float[]> decodedImage(
+        new (std::nothrow) float[imageCount]
+    );
+    if (
+        !image ||
+        !moments ||
+        !noise ||
+        !controlLatent ||
+        !modelPrediction ||
+        !decodedImage
+    ) {
         return NativeError::OUT_OF_MEMORY;
     }
+
+    MNN::Tensor* encoderInput =
+        bundle.vaeEncoder->getSessionInput(
+            bundle.vaeEncoderSession,
+            "image"
+        );
+    if (
+        !kira::pisa::writeFloatNchwTensor(
+            encoderInput,
+            image.get(),
+            imageCount
+        )
+    ) {
+        return NativeError::INFERENCE_FAILED;
+    }
+
+    const MNN::ErrorCode encoderRun =
+        bundle.vaeEncoder->runSession(bundle.vaeEncoderSession);
+    if (encoderRun != MNN::NO_ERROR) {
+        return mapMnnRunError(encoderRun);
+    }
+    completedStages = 1;
+
+    const MNN::Tensor* encoderOutput =
+        bundle.vaeEncoder->getSessionOutput(
+            bundle.vaeEncoderSession,
+            "moments"
+        );
+    if (
+        !kira::pisa::readFloatNchwTensor(
+            encoderOutput,
+            moments.get(),
+            momentsCount
+        ) ||
+        !kira::pisa::fillGaussianNoise(
+            noise.get(),
+            latentCount,
+            SMOKE_NOISE_SEED
+        ) ||
+        !kira::pisa::sampleLatentFromMoments(
+            moments.get(),
+            noise.get(),
+            controlLatent.get(),
+            1,
+            4,
+            latentHeight,
+            latentWidth,
+            VAE_SCALING_FACTOR
+        )
+    ) {
+        return NativeError::INFERENCE_FAILED;
+    }
+
+    MNN::Tensor* unetLatent =
+        bundle.unet->getSessionInput(
+            bundle.unetSession,
+            "latent"
+        );
+    MNN::Tensor* unetTimestep =
+        bundle.unet->getSessionInput(
+            bundle.unetSession,
+            "timestep"
+        );
+    MNN::Tensor* unetPrompt =
+        bundle.unet->getSessionInput(
+            bundle.unetSession,
+            "encoder_hidden_states"
+        );
+    if (
+        !kira::pisa::writeFloatNchwTensor(
+            unetLatent,
+            controlLatent.get(),
+            latentCount
+        ) ||
+        !kira::pisa::writeIntScalarTensor(
+            unetTimestep,
+            PISA_TIMESTEP
+        ) ||
+        !kira::pisa::writeFp16BytesNchwTensor(
+            unetPrompt,
+            bundle.emptyPrompt.get(),
+            bundle.emptyPromptBytes
+        )
+    ) {
+        return NativeError::INFERENCE_FAILED;
+    }
+
+    const MNN::ErrorCode unetRun =
+        bundle.unet->runSession(bundle.unetSession);
+    if (unetRun != MNN::NO_ERROR) {
+        return mapMnnRunError(unetRun);
+    }
+    completedStages = 2;
+
+    const MNN::Tensor* unetOutput =
+        bundle.unet->getSessionOutput(
+            bundle.unetSession,
+            "model_pred"
+        );
+    if (
+        !kira::pisa::readFloatNchwTensor(
+            unetOutput,
+            modelPrediction.get(),
+            latentCount
+        ) ||
+        !kira::pisa::buildDecoderLatent(
+            controlLatent.get(),
+            modelPrediction.get(),
+            controlLatent.get(),
+            latentCount,
+            VAE_SCALING_FACTOR
+        )
+    ) {
+        return NativeError::INFERENCE_FAILED;
+    }
+
+    MNN::Tensor* decoderInput =
+        bundle.vaeDecoder->getSessionInput(
+            bundle.vaeDecoderSession,
+            "latent"
+        );
+    if (
+        !kira::pisa::writeFloatNchwTensor(
+            decoderInput,
+            controlLatent.get(),
+            latentCount
+        )
+    ) {
+        return NativeError::INFERENCE_FAILED;
+    }
+
+    const MNN::ErrorCode decoderRun =
+        bundle.vaeDecoder->runSession(bundle.vaeDecoderSession);
+    if (decoderRun != MNN::NO_ERROR) {
+        return mapMnnRunError(decoderRun);
+    }
+    completedStages = 3;
+
+    const MNN::Tensor* decoderOutput =
+        bundle.vaeDecoder->getSessionOutput(
+            bundle.vaeDecoderSession,
+            "image"
+        );
+    if (
+        !kira::pisa::readFloatNchwTensor(
+            decoderOutput,
+            decodedImage.get(),
+            imageCount
+        )
+    ) {
+        return NativeError::INFERENCE_FAILED;
+    }
+
+    for (std::size_t index = 0; index < imageCount; ++index) {
+        if (!std::isfinite(decodedImage[index])) {
+            return NativeError::INFERENCE_FAILED;
+        }
+    }
+    outputFinite = true;
+    return NativeError::NONE;
 }
 
 bool appendGraphInfo(

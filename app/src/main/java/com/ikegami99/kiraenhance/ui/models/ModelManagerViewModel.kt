@@ -19,6 +19,7 @@ import com.ikegami99.kiraenhance.diagnostics.MnnPisaDiagnosticsFormatter
 import com.ikegami99.kiraenhance.download.ModelDownloadManager
 import com.ikegami99.kiraenhance.download.ModelDownloadWorker
 import com.ikegami99.kiraenhance.inference.ModelLoadResult
+import com.ikegami99.kiraenhance.inference.mnn.MnnPisaGraphContractValidator
 import com.ikegami99.kiraenhance.inference.mnn.MnnPisaUpscaleEngine
 import com.ikegami99.kiraenhance.inference.mnn.PisaModelRequestFactory
 import com.ikegami99.kiraenhance.model.InstalledModelStore
@@ -330,12 +331,25 @@ class ModelManagerViewModel(
                         check(tensors.isNotEmpty()) {
                             "MNNグラフからテンソル情報を取得できませんでした"
                         }
+                        val contract = MnnPisaGraphContractValidator.validate(tensors)
+                        logger.log(
+                            "PiSAProbe",
+                            "graphContract compatible=${contract.isCompatible} " +
+                                "missing=${contract.missingEndpoints.size} " +
+                                "duplicate=${contract.duplicateEndpoints.size} " +
+                                "extra=${contract.unexpectedEndpoints.size}",
+                        )
+                        check(contract.isCompatible) {
+                            "MNNグラフ契約がPiSA exporterと一致しません: " +
+                                (contract.conciseProblem() ?: "unknown mismatch")
+                        }
                         logger.log(
                             "PiSAProbe",
                             "success backend=${session.backend.name.lowercase()} " +
                                 "gpu=${loadResult.gpuEnabled} tensors=${tensors.size}",
                         )
-                        "診断完了: ${session.backend.name} / ${tensors.size} tensors"
+                        "診断完了: ${session.backend.name} / " +
+                            "${tensors.size} tensors / contract OK"
                     }
 
                     is ModelLoadResult.Failed -> {

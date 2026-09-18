@@ -1,0 +1,158 @@
+# PiSA-SR MNN export
+
+This directory contains the offline conversion tooling for the KiraEnhance
+PiSA-SR backend.
+
+The exporter intentionally does **not** download or commit model weights.
+Provide the official PiSA-SR checkout, the official PiSA checkpoint, and a
+local Diffusers-format Stable Diffusion 2.1-base directory yourself.
+
+The Android application must continue to treat PiSA-SR distribution as
+unavailable until the converted artifacts have passed provenance/license
+review, numerical validation, and real-device testing.
+
+## What the exporter produces
+
+A successful conversion creates:
+
+- `vae_encoder.mnn`
+- `unet_default.mnn`
+- `vae_decoder.mnn`
+- `empty_prompt.fp16`
+- `export_manifest.json`
+
+It also keeps the intermediate ONNX files:
+
+- `vae_encoder.onnx`
+- `unet_default.onnx`
+- `vae_decoder.onnx`
+
+Do not commit generated ONNX, MNN, checkpoint, or Stable Diffusion weight
+files to this repository.
+
+## Upstream behavior preserved by this exporter
+
+The exporter follows the official PiSA-SR default one-step inference path:
+
+1. Load the Stable Diffusion 2.1-base UNet.
+2. Add the PiSA pixel LoRA adapters, copy their checkpoint weights, activate
+   all three pixel adapter groups at weight 1.0, then merge them into the
+   base UNet.
+3. Add the semantic LoRA adapters, copy their checkpoint weights, activate
+   all three semantic adapter groups at weight 1.0, then merge them.
+4. Use the empty text prompt.
+5. Use diffusion timestep `1`.
+6. Run one UNet prediction.
+7. The Android inference milestone will later compute
+   `x_denoised = encoded_control - model_pred`.
+
+The VAE encoder graph ends at posterior `moments`
+(`encoder -> quant_conv`). It deliberately does not export
+`latent_dist.sample()`. Stochastic latent sampling belongs in the later
+Android native inference implementation so the random source and sampling
+formula can be tested independently from MNN graph conversion.
+
+## Recommended conversion environment
+
+Start from the versions pinned by the official PiSA-SR project:
+
+- Python 3.10
+- PyTorch 2.0.1
+- diffusers 0.25.0
+- transformers 4.28.1
+- peft 0.9.0
+- numpy 1.23.5
+- the remaining packages from the upstream PiSA-SR `requirements.txt`
+- ONNX with an opset-17-capable PyTorch exporter
+- MNNConvert from the MNN version used for Android validation
+
+The current Android runtime is pinned to MNN 3.6.1. Prefer an MNNConvert
+3.6.1 build for the first correctness baseline and record its exact
+`--version` output in `export_manifest.json`.
+
+The baseline exporter requires CUDA. This is intentional: the fused SD2.1
+UNet is large, and CPU FP16 export is not the path being validated here.
+Quantization is also intentionally deferred until the FP16 baseline has been
+compared numerically.
+
+## Build MNNConvert 3.6.1
+
+From a separate MNN checkout at tag `3.6.1`:
+
+```bash
+mkdir -p build
+cd build
+cmake .. -DMNN_BUILD_CONVERTER=ON
+cmake --build . -j
+```
+
+Use the resulting absolute `MNNConvert` path with `--mnnconvert`.
+
+## Run the exporter
+
+Example:
+
+```bash
+python tools/pisa_export/export_pisa_sr.py \
+  --pisa-repo /abs/path/PiSA-SR \
+  --sd21-base /abs/path/stable-diffusion-2-1-base \
+  --pisa-checkpoint /abs/path/pisa_sr.pkl \
+  --mnnconvert /abs/path/MNN/build/MNNConvert \
+  --output-dir /abs/path/kiraenhance-pisa-export \
+  --device cuda
+```
+
+The default dummy export image is `512x512`. The ONNX image/latent spatial
+axes are dynamic, so this size is only the tracing sample. Both dimensions
+must be positive multiples of 8.
+
+MNN conversion uses the equivalent of:
+
+```text
+MNNConvert -f ONNX --modelFile <graph.onnx> --MNNModel <graph.mnn> --bizCode KiraEnhancePiSA --fp16
+```
+
+The `--fp16` switch is the correctness-first storage baseline. It is not
+the final mobile-size target.
+
+## Provenance manifest
+
+`export_manifest.json` records at least:
+
+- PiSA checkpoint absolute path and SHA-256
+- local SD2.1 directory path
+- PiSA repository path and Git commit when available
+- MNNConvert version
+- ONNX opset
+- timestep `1`
+- empty prompt
+- VAE scaling factor
+- empty-prompt tensor shape
+- sample tracing shapes
+- final artifact byte sizes and SHA-256 hashes
+- UTC generation timestamp
+
+Keep this manifest with every candidate export. Two files named
+`unet_default.mnn` are not necessarily the same model, despite humanity's
+long-running campaign against useful filenames.
+
+## Validation order after export
+
+Do not enable downloads in `app/src/main/assets/model-manifest.json` yet.
+
+The next validation sequence is:
+
+1. Load the four generated artifacts with the existing Android PiSA loader.
+2. Read `MnnPisaNativeBridge.sessionInfo(handle)` to confirm the selected
+   backend.
+3. Read `MnnPisaNativeBridge.graphInfo(handle)` and record the actual input
+   and output tensor names, shapes, types, and dimension formats.
+4. Compare that observed MNN contract with the ONNX export contract.
+5. Only then implement native VAE sampling and graph execution.
+6. Compare PyTorch/ONNX/MNN intermediate tensors before considering
+   quantization.
+7. Review redistribution terms and provenance before enabling app-hosted
+   model downloads.
+
+The current Android `infer()` must remain `NOT_IMPLEMENTED` until these
+checks are complete.

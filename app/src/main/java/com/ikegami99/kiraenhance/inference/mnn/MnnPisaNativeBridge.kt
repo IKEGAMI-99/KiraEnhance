@@ -22,6 +22,16 @@ object MnnPisaNativeBridge : MnnPisaNativeApi {
 
     private external fun nativeGraphInfo(handle: Long): String
 
+    private external fun nativeInfer(
+        handle: Long,
+        inputPixels: ByteBuffer,
+        width: Int,
+        height: Int,
+        inputRowStrideBytes: Int,
+        outputPixels: ByteBuffer,
+        outputCapacityBytes: Long,
+    ): LongArray
+
     private external fun nativeUnloadModel(handle: Long)
 
     private fun ensureNativeLibraryLoaded() {
@@ -87,13 +97,28 @@ object MnnPisaNativeBridge : MnnPisaNativeApi {
         inputRowStrideBytes: Int,
         outputPixels: ByteBuffer,
         outputCapacityBytes: Long,
-    ): MnnPisaNativeInferenceResult = MnnPisaNativeInferenceResult(
-        errorCode = MnnPisaNativeError.NOT_IMPLEMENTED,
-        outputWidth = 0,
-        outputHeight = 0,
-        outputRowStrideBytes = 0,
-        gpuUsed = false,
-    )
+    ): MnnPisaNativeInferenceResult = runCatching {
+        ensureNativeLibraryLoaded()
+        MnnPisaNativeInferenceResultCodec.decode(
+            nativeInfer(
+                handle = handle,
+                inputPixels = inputPixels,
+                width = width,
+                height = height,
+                inputRowStrideBytes = inputRowStrideBytes,
+                outputPixels = outputPixels,
+                outputCapacityBytes = outputCapacityBytes,
+            ),
+        )
+    }.getOrElse {
+        MnnPisaNativeInferenceResult(
+            errorCode = MnnPisaNativeError.INTERNAL,
+            outputWidth = 0,
+            outputHeight = 0,
+            outputRowStrideBytes = 0,
+            gpuUsed = false,
+        )
+    }
 
     override fun unload(handle: Long) {
         if (handle == 0L) {

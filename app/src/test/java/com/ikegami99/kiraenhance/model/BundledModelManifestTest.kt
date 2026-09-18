@@ -10,6 +10,29 @@ class BundledModelManifestTest {
     private val parser = ModelManifestParser()
 
     @Test
+    fun pisaPlaceholderMatchesFourArtifactRuntimeContractButRemainsUnavailable() {
+        val manifestFile = File("src/main/assets/model-manifest.json")
+        assertTrue("Bundled manifest must exist", manifestFile.isFile)
+
+        val manifest = parser.parse(manifestFile.readText())
+        val pisa = manifest.models.single { it.id == "pisa-sr" }
+
+        assertEquals(ModelBackend.MNN, pisa.backend)
+        assertEquals(EnhancementMode.BALANCED, pisa.mode)
+        assertEquals(
+            listOf(
+                "vae_encoder.mnn",
+                "unet_default.mnn",
+                "vae_decoder.mnn",
+                "empty_prompt.fp16",
+            ),
+            pisa.artifacts.map { it.fileName },
+        )
+        assertTrue(pisa.artifacts.all { it.downloadUrl.contains("example.invalid") })
+        assertFalse(pisa.isDownloadableProductionArtifactSet())
+    }
+
+    @Test
     fun ultraSharpUsesVerifiedPinnedNcnnArtifacts() {
         val manifestFile = File("src/main/assets/model-manifest.json")
         assertTrue("Bundled manifest must exist", manifestFile.isFile)

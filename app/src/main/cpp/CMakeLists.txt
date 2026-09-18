@@ -46,6 +46,7 @@ add_library(
     mnn_pisa_loader.cpp
     pisa_latent_math.cpp
     pisa_gaussian_noise.cpp
+    pisa_image_tensor.cpp
 )
 
 target_compile_features(kiraenhance PRIVATE cxx_std_17)

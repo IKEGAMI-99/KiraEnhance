@@ -27,6 +27,14 @@ bool writeFloatNchwTensor(
     std::size_t count
 );
 
+bool writeRgba8888BicubicNormalizedTensor(
+    MNN::Tensor* tensor,
+    const std::uint8_t* rgba,
+    int sourceWidth,
+    int sourceHeight,
+    int rowStrideBytes
+);
+
 bool readFloatNchwTensor(
     const MNN::Tensor* tensor,
     float* values,

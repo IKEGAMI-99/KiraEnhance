@@ -19,6 +19,12 @@ struct TilePlan {
     std::vector<TileRegion> tiles;
 };
 
+bool requiresTiling(
+    int imageWidth,
+    int imageHeight,
+    int tileSize
+);
+
 bool buildTilePlan(
     int imageWidth,
     int imageHeight,

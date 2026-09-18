@@ -197,6 +197,42 @@ class MnnPisaUpscaleEngineTest {
     }
 
     @Test
+    fun `runs full graph smoke through native boundary`() {
+        val expected = MnnPisaNativeSmokeResult(
+            errorCode = MnnPisaNativeError.NONE,
+            completedStages = 3,
+            outputFinite = true,
+        )
+        val native = FakeMnnPisaNativeApi(
+            smokeResult = expected,
+        )
+        val engine = MnnPisaUpscaleEngine(native)
+        assertTrue(engine.load(request()) is ModelLoadResult.Loaded)
+
+        val result = engine.smokeGraph(
+            imageWidth = 512,
+            imageHeight = 512,
+        )
+
+        assertEquals(expected, result)
+        assertEquals(1, native.smokeCalls)
+    }
+
+    @Test
+    fun `smoke rejects unloaded engine`() {
+        val native = FakeMnnPisaNativeApi()
+        val engine = MnnPisaUpscaleEngine(native)
+
+        val result = engine.smokeGraph(
+            imageWidth = 512,
+            imageHeight = 512,
+        )
+
+        assertEquals(MnnPisaNativeError.LOAD_FAILED, result.errorCode)
+        assertEquals(0, native.smokeCalls)
+    }
+
+    @Test
     fun `not implemented inference becomes typed failure instead of fake output`() {
         val native = FakeMnnPisaNativeApi(
             inferenceResult = MnnPisaNativeInferenceResult(
@@ -286,6 +322,11 @@ class MnnPisaUpscaleEngineTest {
             latentWidth = 0,
             latentHeight = 0,
         ),
+        private val smokeResult: MnnPisaNativeSmokeResult = MnnPisaNativeSmokeResult(
+            errorCode = MnnPisaNativeError.NOT_IMPLEMENTED,
+            completedStages = 0,
+            outputFinite = false,
+        ),
         private val sessionInfo: MnnPisaSessionInfo? = null,
         private val graphInfo: List<MnnPisaTensorInfo>? = null,
         private val throwOnDiagnostics: Boolean = false,
@@ -296,6 +337,7 @@ class MnnPisaUpscaleEngineTest {
         var sessionInfoCalls = 0
         var graphInfoCalls = 0
         var prepareCalls = 0
+        var smokeCalls = 0
 
         override fun loadModel(
             vaeEncoderPath: String,
@@ -331,6 +373,15 @@ class MnnPisaUpscaleEngineTest {
         ): MnnPisaNativePrepareResult {
             prepareCalls += 1
             return prepareResult
+        }
+
+        override fun smokeGraph(
+            handle: Long,
+            imageWidth: Int,
+            imageHeight: Int,
+        ): MnnPisaNativeSmokeResult {
+            smokeCalls += 1
+            return smokeResult
         }
 
         override fun infer(

@@ -215,6 +215,22 @@ void testTilingPolicyUsesTileThreshold() {
         ),
         "smaller latent remains monolithic"
     );
+    expectFalse(
+        kira::pisa::requiresTiling(
+            64,
+            128,
+            96
+        ),
+        "narrow latent below tile area remains monolithic"
+    );
+    expectTrue(
+        kira::pisa::requiresTiling(
+            80,
+            120,
+            96
+        ),
+        "rectangular latent above tile area uses tiling"
+    );
     expectTrue(
         kira::pisa::requiresTiling(
             97,

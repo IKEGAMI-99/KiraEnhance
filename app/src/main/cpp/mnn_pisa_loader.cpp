@@ -1429,15 +1429,11 @@ Java_com_ikegami99_kiraenhance_inference_mnn_MnnPisaNativeBridge_nativeInfer(
         return makeInferenceResult(env, NativeError::INVALID_ARGUMENT);
     }
 
-    // The first real-image milestone intentionally supports only the
-    // upstream common path: no minimum-size preboost and no post-model
-    // exact-size correction. Reject those shapes before resizing any MNN
-    // session so an unsupported request stays cheap.
-    if (
-        resizePlan.smallInputBoosted ||
-        resizePlan.modelWidth != resizePlan.outputWidth ||
-        resizePlan.modelHeight != resizePlan.outputHeight
-    ) {
+    // Minimum-size preboost still needs the upstream pre-resize path.
+    // Odd source dimensions are supported by running the graph at the
+    // 8-aligned model size and resizing the decoded image back to the
+    // app's exact 4x output contract below.
+    if (resizePlan.smallInputBoosted) {
         return makeInferenceResult(
             env,
             NativeError::NOT_IMPLEMENTED,
@@ -1657,10 +1653,93 @@ Java_com_ikegami99_kiraenhance_inference_mnn_MnnPisaNativeBridge_nativeInfer(
             decodedImage[index] * 2.0f - 1.0f;
     }
 
-    const int outputRowStrideBytes = resizePlan.outputWidth * 4;
+    const float* finalImage = decodedImage.get();
+    std::unique_ptr<float[]> resizedImage;
+    if (
+        resizePlan.modelWidth != resizePlan.outputWidth ||
+        resizePlan.modelHeight != resizePlan.outputHeight
+    ) {
+        std::size_t finalImageCount = 0;
+        if (
+            !checkedElementCount(
+                {
+                    3U,
+                    static_cast<std::size_t>(
+                        resizePlan.outputHeight
+                    ),
+                    static_cast<std::size_t>(
+                        resizePlan.outputWidth
+                    ),
+                },
+                finalImageCount
+            )
+        ) {
+            return makeInferenceResult(
+                env,
+                NativeError::OUT_OF_MEMORY,
+                0,
+                0,
+                0,
+                isGpuBackend(bundle->backend)
+            );
+        }
+
+        resizedImage.reset(
+            new (std::nothrow) float[finalImageCount]
+        );
+        if (!resizedImage) {
+            return makeInferenceResult(
+                env,
+                NativeError::OUT_OF_MEMORY,
+                0,
+                0,
+                0,
+                isGpuBackend(bundle->backend)
+            );
+        }
+
+        if (
+            !kira::pisa::resizePlanarBilinear(
+                decodedImage.get(),
+                3,
+                resizePlan.modelWidth,
+                resizePlan.modelHeight,
+                resizedImage.get(),
+                resizePlan.outputWidth,
+                resizePlan.outputHeight,
+                finalImageCount
+            )
+        ) {
+            return makeInferenceResult(
+                env,
+                NativeError::INFERENCE_FAILED,
+                0,
+                0,
+                0,
+                isGpuBackend(bundle->backend)
+            );
+        }
+        finalImage = resizedImage.get();
+    }
+
+    if (
+        resizePlan.outputWidth >
+        std::numeric_limits<int>::max() / 4
+    ) {
+        return makeInferenceResult(
+            env,
+            NativeError::OUT_OF_MEMORY,
+            0,
+            0,
+            0,
+            isGpuBackend(bundle->backend)
+        );
+    }
+    const int outputRowStrideBytes =
+        resizePlan.outputWidth * 4;
     if (
         !kira::pisa::normalizedNchwToRgba8888(
-            decodedImage.get(),
+            finalImage,
             resizePlan.outputWidth,
             resizePlan.outputHeight,
             outputData,

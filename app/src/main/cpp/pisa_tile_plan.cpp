@@ -45,6 +45,23 @@ bool buildAxisStarts(
 
 }  // namespace
 
+bool requiresTiling(
+    int imageWidth,
+    int imageHeight,
+    int tileSize
+) {
+    if (
+        imageWidth <= 0 ||
+        imageHeight <= 0 ||
+        tileSize <= 0
+    ) {
+        return false;
+    }
+
+    return imageWidth > tileSize ||
+        imageHeight > tileSize;
+}
+
 bool buildTilePlan(
     int imageWidth,
     int imageHeight,

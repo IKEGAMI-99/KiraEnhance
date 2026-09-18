@@ -66,6 +66,16 @@ interface MnnPisaNativeApi {
         latentHeight = 0,
     )
 
+    fun smokeGraph(
+        handle: Long,
+        imageWidth: Int,
+        imageHeight: Int,
+    ): MnnPisaNativeSmokeResult = MnnPisaNativeSmokeResult(
+        errorCode = MnnPisaNativeError.NOT_IMPLEMENTED,
+        completedStages = 0,
+        outputFinite = false,
+    )
+
     fun infer(
         handle: Long,
         inputPixels: ByteBuffer,

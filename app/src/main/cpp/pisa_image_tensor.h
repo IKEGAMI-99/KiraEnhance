@@ -14,6 +14,17 @@ bool rgba8888ToNormalizedNchw(
     std::size_t outputFloatCount
 );
 
+bool resizePlanarBilinear(
+    const float* input,
+    int channels,
+    int inputWidth,
+    int inputHeight,
+    float* output,
+    int outputWidth,
+    int outputHeight,
+    std::size_t outputFloatCount
+);
+
 bool normalizedNchwToRgba8888(
     const float* input,
     int width,

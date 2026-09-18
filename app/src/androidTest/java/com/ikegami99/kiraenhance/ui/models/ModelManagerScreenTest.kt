@@ -32,6 +32,8 @@ class ModelManagerScreenTest {
                     onDownload = {},
                     onDelete = {},
                     onWifiOnlyChanged = {},
+                    onImportValidation = {},
+                    onProbeValidation = {},
                     onOpenLicense = {},
                 )
             }
@@ -71,6 +73,8 @@ class ModelManagerScreenTest {
                     onDownload = {},
                     onDelete = {},
                     onWifiOnlyChanged = {},
+                    onImportValidation = {},
+                    onProbeValidation = {},
                     onOpenLicense = {},
                 )
             }

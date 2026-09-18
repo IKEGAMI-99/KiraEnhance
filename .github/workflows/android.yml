@@ -18,6 +18,17 @@ jobs:
       - name: Test PiSA export tooling
         run: python3 -m unittest discover -s tools/pisa_export/tests -v
 
+      - name: Test PiSA latent math
+        shell: bash
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror \
+            -Iapp/src/main/cpp \
+            app/src/test/cpp/pisa_latent_math_test.cpp \
+            app/src/main/cpp/pisa_latent_math.cpp \
+            -o "$RUNNER_TEMP/pisa_latent_math_test"
+          "$RUNNER_TEMP/pisa_latent_math_test"
+
       - name: Set up JDK 17
         uses: actions/setup-java@v5
         with:

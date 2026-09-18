@@ -73,6 +73,18 @@ jobs:
             -o "$RUNNER_TEMP/pisa_tile_plan_test"
           "$RUNNER_TEMP/pisa_tile_plan_test"
 
+      - name: Test PiSA latent tile stitching
+        shell: bash
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror \
+            -Iapp/src/main/cpp \
+            app/src/test/cpp/pisa_tile_tensor_test.cpp \
+            app/src/main/cpp/pisa_tile_tensor.cpp \
+            app/src/main/cpp/pisa_tile_plan.cpp \
+            -o "$RUNNER_TEMP/pisa_tile_tensor_test"
+          "$RUNNER_TEMP/pisa_tile_tensor_test"
+
       - name: Test PiSA AdaIN color alignment
         shell: bash
         run: |

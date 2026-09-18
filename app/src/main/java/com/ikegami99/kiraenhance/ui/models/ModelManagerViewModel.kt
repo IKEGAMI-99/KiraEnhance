@@ -377,13 +377,34 @@ class ModelManagerViewModel(
                         ) {
                             "PiSA-SR MNNグラフ準備後のshapeが不正です"
                         }
+                        val smoke = engine.smokeGraph(
+                            imageWidth = PISA_PROBE_SIZE,
+                            imageHeight = PISA_PROBE_SIZE,
+                        )
+                        logger.log(
+                            "PiSAProbe",
+                            "smoke error=${smoke.errorCode} " +
+                                "stages=${smoke.completedStages}/3 " +
+                                "finite=${smoke.outputFinite}",
+                        )
+                        check(smoke.errorCode == MnnPisaNativeError.NONE) {
+                            "PiSA-SRフルグラフ診断に失敗しました: " +
+                                "${smoke.errorCode} " +
+                                "(${smoke.completedStages}/3 stages)"
+                        }
+                        check(
+                            smoke.completedStages == 3 &&
+                                smoke.outputFinite
+                        ) {
+                            "PiSA-SRフルグラフ診断の出力が不正です"
+                        }
                         logger.log(
                             "PiSAProbe",
                             "success backend=${session.backend.name.lowercase()} " +
                                 "gpu=${loadResult.gpuEnabled} tensors=${tensors.size}",
                         )
                         "診断完了: ${session.backend.name} / " +
-                            "${tensors.size} tensors / 512x512 prepare OK"
+                            "${tensors.size} tensors / full graph smoke OK"
                     }
 
                     is ModelLoadResult.Failed -> {

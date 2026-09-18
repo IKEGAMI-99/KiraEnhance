@@ -1,10 +1,14 @@
 package com.ikegami99.kiraenhance.ui.models
 
+import android.content.ContentResolver
 import android.content.Context
+import android.net.Uri
+import android.provider.OpenableColumns
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.Observer
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.viewModelScope
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import com.ikegami99.kiraenhance.device.DeviceCapabilities
@@ -18,9 +22,11 @@ import com.ikegami99.kiraenhance.model.ModelDescriptor
 import com.ikegami99.kiraenhance.model.ModelManifestParser
 import java.net.URI
 import java.util.UUID
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 
 enum class ModelDownloadState {
     IDLE,
@@ -114,6 +120,7 @@ class ModelManagerViewModel(
     private val deviceDetector: DeviceCapabilityDetector,
     private val downloadManager: ModelDownloadManager,
     private val workManager: WorkManager,
+    private val contentResolver: ContentResolver,
     private val logger: AppDiagnosticLogger,
     initialError: String? = null,
 ) : ViewModel() {
@@ -211,6 +218,127 @@ class ModelManagerViewModel(
 
     fun reinstall(modelId: String) {
         download(modelId)
+    }
+
+    fun importValidationArtifacts(modelId: String, uris: List<Uri>) {
+        val card = _state.value.cards.firstOrNull { it.model.id == modelId } ?: return
+        if (card.downloadAvailable) {
+            updateCard(modelId) {
+                it.copy(errorMessage = "配布済みモデルではローカル検証インポートを使用できません")
+            }
+            return
+        }
+        if (uris.isEmpty()) {
+            logger.log("ModelImport", "cancelled model=$modelId")
+            return
+        }
+
+        updateCard(modelId) { it.copy(errorMessage = null) }
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                importValidationArtifacts(card.model, uris)
+            }.fold(
+                onSuccess = { bytes ->
+                    logger.log(
+                        "ModelImport",
+                        "success model=$modelId files=${card.model.artifacts.size} bytes=$bytes",
+                    )
+                    updateCard(modelId) {
+                        it.copy(
+                            installed = store.isInstalled(card.model),
+                            downloadState = ModelDownloadState.SUCCEEDED,
+                            errorMessage = null,
+                        )
+                    }
+                },
+                onFailure = { error ->
+                    logger.log(
+                        "ModelImport",
+                        "failed model=$modelId type=${error.javaClass.simpleName} " +
+                            "message=${error.message ?: "no-message"}",
+                    )
+                    updateCard(modelId) {
+                        it.copy(
+                            installed = store.isInstalled(card.model),
+                            downloadState = ModelDownloadState.FAILED,
+                            errorMessage = error.message ?: "検証用モデルの読み込みに失敗しました",
+                        )
+                    }
+                },
+            )
+        }
+    }
+
+    private fun importValidationArtifacts(model: ModelDescriptor, uris: List<Uri>): Long {
+        val requiredNames = model.artifacts.map { it.fileName }
+        val requiredSet = requiredNames.toSet()
+        val selected = linkedMapOf<String, Uri>()
+
+        uris.forEach { uri ->
+            val name = displayName(uri)
+                ?: error("選択したファイル名を取得できませんでした")
+            if (name in requiredSet) {
+                check(selected.put(name, uri) == null) {
+                    "同じファイルが複数選択されています: $name"
+                }
+            }
+        }
+
+        val missing = requiredNames.filterNot(selected::containsKey)
+        check(missing.isEmpty()) {
+            "必要なファイルが不足しています: ${missing.joinToString()}"
+        }
+
+        check(store.deleteModel(model)) {
+            "既存の検証用モデルを削除できませんでした"
+        }
+
+        var copiedBytes = 0L
+        try {
+            requiredNames.forEach { fileName ->
+                val sourceUri = selected.getValue(fileName)
+                val destination = store.artifactFile(model.id, model.version, fileName)
+                destination.parentFile?.mkdirs()
+                val copied = contentResolver.openInputStream(sourceUri)?.use { input ->
+                    destination.outputStream().use { output ->
+                        input.copyTo(output)
+                    }
+                } ?: error("ファイルを開けませんでした: $fileName")
+                check(copied > 0L && destination.isFile && destination.length() > 0L) {
+                    "空のファイルは読み込めません: $fileName"
+                }
+                copiedBytes += copied
+            }
+
+            check(store.markValidationInstalled(model)) {
+                "検証用モデルのインストール情報を保存できませんでした"
+            }
+            check(store.isInstalled(model)) {
+                "検証用モデルの保存後チェックに失敗しました"
+            }
+            return copiedBytes
+        } catch (error: Throwable) {
+            store.deleteModel(model)
+            throw error
+        }
+    }
+
+    private fun displayName(uri: Uri): String? {
+        val fromProvider = contentResolver.query(
+            uri,
+            arrayOf(OpenableColumns.DISPLAY_NAME),
+            null,
+            null,
+            null,
+        )?.use { cursor ->
+            val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+            if (index >= 0 && cursor.moveToFirst()) cursor.getString(index) else null
+        }
+        return fromProvider
+            ?.takeIf { it.isNotBlank() }
+            ?: uri.lastPathSegment
+                ?.substringAfterLast('/')
+                ?.takeIf { it.isNotBlank() }
     }
 
     private fun enqueueDownload(model: ModelDescriptor, replaceExisting: Boolean): UUID {
@@ -421,6 +549,7 @@ class ModelManagerViewModelFactory(
             deviceDetector = DeviceCapabilityDetector(appContext),
             downloadManager = ModelDownloadManager(appContext),
             workManager = WorkManager.getInstance(appContext),
+            contentResolver = appContext.contentResolver,
             logger = AppDiagnosticLogger.get(appContext),
             initialError = initialError,
         ) as T

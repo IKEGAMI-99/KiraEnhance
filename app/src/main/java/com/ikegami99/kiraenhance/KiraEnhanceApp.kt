@@ -8,7 +8,9 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -136,6 +138,16 @@ fun KiraEnhanceApp() {
             }
             val modelManagerViewModel: ModelManagerViewModel = viewModel(factory = factory)
             val state by modelManagerViewModel.state.collectAsStateWithLifecycle()
+            var pendingValidationImport by remember { mutableStateOf<String?>(null) }
+            val validationImportLauncher = rememberLauncherForActivityResult(
+                contract = ActivityResultContracts.OpenMultipleDocuments(),
+            ) { uris ->
+                val modelId = pendingValidationImport
+                pendingValidationImport = null
+                if (modelId != null) {
+                    modelManagerViewModel.importValidationArtifacts(modelId, uris)
+                }
+            }
 
             ModelManagerScreen(
                 state = state,
@@ -143,6 +155,10 @@ fun KiraEnhanceApp() {
                 onDownload = modelManagerViewModel::download,
                 onDelete = modelManagerViewModel::delete,
                 onWifiOnlyChanged = modelManagerViewModel::setWifiOnly,
+                onImportValidation = { modelId ->
+                    pendingValidationImport = modelId
+                    validationImportLauncher.launch(arrayOf("*/*"))
+                },
                 onOpenLicense = { url ->
                     runCatching {
                         context.startActivity(

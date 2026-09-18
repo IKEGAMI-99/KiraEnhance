@@ -105,6 +105,7 @@ data class ModelCardUiState(
     val warningMessage: String? = null,
     val errorMessage: String? = null,
     val downloadAvailable: Boolean = true,
+    val validationImporting: Boolean = false,
 )
 
 data class ModelManagerUiState(
@@ -233,7 +234,12 @@ class ModelManagerViewModel(
             return
         }
 
-        updateCard(modelId) { it.copy(errorMessage = null) }
+        updateCard(modelId) {
+            it.copy(
+                validationImporting = true,
+                errorMessage = null,
+            )
+        }
         viewModelScope.launch(Dispatchers.IO) {
             runCatching {
                 importValidationArtifacts(card.model, uris)
@@ -247,6 +253,7 @@ class ModelManagerViewModel(
                         it.copy(
                             installed = store.isInstalled(card.model),
                             downloadState = ModelDownloadState.SUCCEEDED,
+                            validationImporting = false,
                             errorMessage = null,
                         )
                     }
@@ -261,6 +268,7 @@ class ModelManagerViewModel(
                         it.copy(
                             installed = store.isInstalled(card.model),
                             downloadState = ModelDownloadState.FAILED,
+                            validationImporting = false,
                             errorMessage = error.message ?: "検証用モデルの読み込みに失敗しました",
                         )
                     }

@@ -52,6 +52,7 @@ fun ModelManagerScreen(
     onDownload: (String) -> Unit,
     onDelete: (String) -> Unit,
     onWifiOnlyChanged: (Boolean) -> Unit,
+    onImportValidation: (String) -> Unit,
     onOpenLicense: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -153,6 +154,7 @@ fun ModelManagerScreen(
                 wifiOnly = state.wifiOnly,
                 onDownload = { onDownload(card.model.id) },
                 onDelete = { onDelete(card.model.id) },
+                onImportValidation = { onImportValidation(card.model.id) },
                 onOpenLicense = { onOpenLicense(card.model.licenseUrl) },
             )
         }
@@ -260,6 +262,7 @@ private fun ModelCard(
     wifiOnly: Boolean,
     onDownload: () -> Unit,
     onDelete: () -> Unit,
+    onImportValidation: () -> Unit,
     onOpenLicense: () -> Unit,
 ) {
     val model = card.model
@@ -356,8 +359,21 @@ private fun ModelCard(
 
             if (!card.downloadAvailable && !card.installed) {
                 MessageSurface(
-                    message = "モデルWeightの配布URLは準備中です。推論ランタイム検証後に有効化します。",
+                    message = if (model.id == PISA_MODEL_ID) {
+                        "配布前の検証段階です。変換済みの4ファイルを端末から選択して実機テストできます。"
+                    } else {
+                        "モデルWeightの配布URLは準備中です。推論ランタイム検証後に有効化します。"
+                    },
                     isWarning = false,
+                )
+            }
+
+            if (card.validationImporting) {
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                Text(
+                    text = "検証用モデルを端末へ読み込み中...",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
 
@@ -409,6 +425,8 @@ private fun ModelCard(
                 ModelDownloadState.BLOCKED,
                 ModelDownloadState.RUNNING,
             )
+            val busy = downloadBusy || card.validationImporting
+            val localPiSAValidation = model.id == PISA_MODEL_ID && !card.downloadAvailable
             if (card.installed) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -416,22 +434,31 @@ private fun ModelCard(
                 ) {
                     OutlinedButton(
                         onClick = onDelete,
+                        enabled = !card.validationImporting,
                         modifier = Modifier.weight(1f),
                     ) {
                         Text("削除")
                     }
                     Button(
-                        onClick = onDownload,
-                        enabled = card.downloadAvailable && !downloadBusy,
+                        onClick = if (localPiSAValidation) onImportValidation else onDownload,
+                        enabled = if (localPiSAValidation) !busy else card.downloadAvailable && !busy,
                         modifier = Modifier.weight(1f),
                     ) {
-                        Text("再インストール")
+                        Text(if (localPiSAValidation) "検証ファイルを入替" else "再インストール")
                     }
+                }
+            } else if (localPiSAValidation) {
+                Button(
+                    onClick = onImportValidation,
+                    enabled = !busy,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("検証用4ファイルを選択")
                 }
             } else {
                 Button(
                     onClick = onDownload,
-                    enabled = card.downloadAvailable && !downloadBusy,
+                    enabled = card.downloadAvailable && !busy,
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     Text(if (card.downloadAvailable) "ダウンロード" else "配布準備中")
@@ -498,3 +525,5 @@ private fun formatBytes(bytes: Long): String = when {
     bytes >= 1024L -> String.format(Locale.US, "%.1f KB", bytes / 1024.0)
     else -> "$bytes B"
 }
+
+private const val PISA_MODEL_ID = "pisa-sr"

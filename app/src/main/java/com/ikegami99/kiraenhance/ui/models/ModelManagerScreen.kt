@@ -53,6 +53,7 @@ fun ModelManagerScreen(
     onDelete: (String) -> Unit,
     onWifiOnlyChanged: (Boolean) -> Unit,
     onImportValidation: (String) -> Unit,
+    onProbeValidation: (String) -> Unit,
     onOpenLicense: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -155,6 +156,7 @@ fun ModelManagerScreen(
                 onDownload = { onDownload(card.model.id) },
                 onDelete = { onDelete(card.model.id) },
                 onImportValidation = { onImportValidation(card.model.id) },
+                onProbeValidation = { onProbeValidation(card.model.id) },
                 onOpenLicense = { onOpenLicense(card.model.licenseUrl) },
             )
         }
@@ -263,6 +265,7 @@ private fun ModelCard(
     onDownload: () -> Unit,
     onDelete: () -> Unit,
     onImportValidation: () -> Unit,
+    onProbeValidation: () -> Unit,
     onOpenLicense: () -> Unit,
 ) {
     val model = card.model
@@ -409,12 +412,37 @@ private fun ModelCard(
                 }
             }
 
+            card.validationProbeMessage?.let { message ->
+                MessageSurface(
+                    message = message + "。ホームのログ保存からテンソル契約を出力できます。",
+                    isWarning = false,
+                )
+            }
+
             card.errorMessage?.let { error ->
                 Text(
                     text = error,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.error,
                 )
+            }
+
+            val localPiSAValidation = model.id == PISA_MODEL_ID && !card.downloadAvailable
+            if (localPiSAValidation && card.installed) {
+                Button(
+                    onClick = onProbeValidation,
+                    enabled = !card.validationImporting &&
+                        !card.validationProbeRunning &&
+                        card.downloadState !in setOf(
+                            ModelDownloadState.QUEUED,
+                            ModelDownloadState.RETRY_WAIT,
+                            ModelDownloadState.BLOCKED,
+                            ModelDownloadState.RUNNING,
+                        ),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(if (card.validationProbeRunning) "PiSA診断中..." else "PiSA診断を実行")
+                }
             }
 
             Spacer(modifier = Modifier.height(2.dp))
@@ -425,8 +453,7 @@ private fun ModelCard(
                 ModelDownloadState.BLOCKED,
                 ModelDownloadState.RUNNING,
             )
-            val busy = downloadBusy || card.validationImporting
-            val localPiSAValidation = model.id == PISA_MODEL_ID && !card.downloadAvailable
+            val busy = downloadBusy || card.validationImporting || card.validationProbeRunning
             if (card.installed) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),

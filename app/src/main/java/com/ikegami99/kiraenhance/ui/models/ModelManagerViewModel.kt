@@ -15,8 +15,12 @@ import com.ikegami99.kiraenhance.device.DeviceCapabilities
 import com.ikegami99.kiraenhance.device.DeviceCapabilityDetector
 import com.ikegami99.kiraenhance.device.SupportTier
 import com.ikegami99.kiraenhance.diagnostics.AppDiagnosticLogger
+import com.ikegami99.kiraenhance.diagnostics.MnnPisaDiagnosticsFormatter
 import com.ikegami99.kiraenhance.download.ModelDownloadManager
 import com.ikegami99.kiraenhance.download.ModelDownloadWorker
+import com.ikegami99.kiraenhance.inference.ModelLoadResult
+import com.ikegami99.kiraenhance.inference.mnn.MnnPisaUpscaleEngine
+import com.ikegami99.kiraenhance.inference.mnn.PisaModelRequestFactory
 import com.ikegami99.kiraenhance.model.InstalledModelStore
 import com.ikegami99.kiraenhance.model.ModelDescriptor
 import com.ikegami99.kiraenhance.model.ModelManifestParser
@@ -106,6 +110,8 @@ data class ModelCardUiState(
     val errorMessage: String? = null,
     val downloadAvailable: Boolean = true,
     val validationImporting: Boolean = false,
+    val validationProbeRunning: Boolean = false,
+    val validationProbeMessage: String? = null,
 )
 
 data class ModelManagerUiState(
@@ -270,6 +276,97 @@ class ModelManagerViewModel(
                             downloadState = ModelDownloadState.FAILED,
                             validationImporting = false,
                             errorMessage = error.message ?: "検証用モデルの読み込みに失敗しました",
+                        )
+                    }
+                },
+            )
+        }
+    }
+
+    fun probeValidationModel(modelId: String) {
+        val card = _state.value.cards.firstOrNull { it.model.id == modelId } ?: return
+        if (modelId != PISA_MODEL_ID || !card.installed) {
+            updateCard(modelId) {
+                it.copy(errorMessage = "PiSA-SRの検証用モデルを先に読み込んでください")
+            }
+            return
+        }
+        if (card.validationImporting || card.validationProbeRunning) {
+            return
+        }
+
+        updateCard(modelId) {
+            it.copy(
+                validationProbeRunning = true,
+                validationProbeMessage = null,
+                errorMessage = null,
+            )
+        }
+
+        viewModelScope.launch(Dispatchers.IO) {
+            val engine = MnnPisaUpscaleEngine(
+                onDiagnostics = { snapshot ->
+                    MnnPisaDiagnosticsFormatter.format(snapshot).forEach { line ->
+                        logger.log("PiSA", line)
+                    }
+                },
+            )
+            val result = runCatching {
+                val request = PisaModelRequestFactory.create(card.model) { fileName ->
+                    store.artifactFile(
+                        modelId = card.model.id,
+                        version = card.model.version,
+                        fileName = fileName,
+                    ).absolutePath
+                }
+                when (val loadResult = engine.load(request)) {
+                    is ModelLoadResult.Loaded -> {
+                        val diagnostics = engine.diagnostics()
+                            ?: error("PiSA-SR診断情報を取得できませんでした")
+                        val session = diagnostics.sessionInfo
+                            ?: error("MNNバックエンド情報を取得できませんでした")
+                        val tensors = diagnostics.tensorInfo
+                            ?: error("MNNテンソル情報を取得できませんでした")
+                        check(tensors.isNotEmpty()) {
+                            "MNNグラフからテンソル情報を取得できませんでした"
+                        }
+                        logger.log(
+                            "PiSAProbe",
+                            "success backend=${session.backend.name.lowercase()} " +
+                                "gpu=${loadResult.gpuEnabled} tensors=${tensors.size}",
+                        )
+                        "診断完了: ${session.backend.name} / ${tensors.size} tensors"
+                    }
+
+                    is ModelLoadResult.Failed -> {
+                        error(loadResult.error.message)
+                    }
+                }
+            }.also {
+                engine.unload()
+            }
+
+            result.fold(
+                onSuccess = { message ->
+                    updateCard(modelId) {
+                        it.copy(
+                            validationProbeRunning = false,
+                            validationProbeMessage = message,
+                            errorMessage = null,
+                        )
+                    }
+                },
+                onFailure = { error ->
+                    logger.log(
+                        "PiSAProbe",
+                        "failed type=${error.javaClass.simpleName} " +
+                            "message=${error.message ?: "no-message"}",
+                    )
+                    updateCard(modelId) {
+                        it.copy(
+                            validationProbeRunning = false,
+                            validationProbeMessage = null,
+                            errorMessage = error.message ?: "PiSA-SR診断に失敗しました",
                         )
                     }
                 },
@@ -529,6 +626,10 @@ class ModelManagerViewModel(
         val host = URI(url).host?.lowercase() ?: return@runCatching false
         host != "example.invalid" && !host.endsWith(".invalid")
     }.getOrDefault(false)
+
+    private companion object {
+        const val PISA_MODEL_ID = "pisa-sr"
+    }
 }
 
 class ModelManagerViewModelFactory(

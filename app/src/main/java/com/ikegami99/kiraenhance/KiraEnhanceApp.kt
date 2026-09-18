@@ -159,6 +159,7 @@ fun KiraEnhanceApp() {
                     pendingValidationImport = modelId
                     validationImportLauncher.launch(arrayOf("*/*"))
                 },
+                onProbeValidation = modelManagerViewModel::probeValidationModel,
                 onOpenLicense = { url ->
                     runCatching {
                         context.startActivity(

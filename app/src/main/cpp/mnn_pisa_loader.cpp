@@ -6,6 +6,7 @@
 #include <memory>
 #include <new>
 #include <string>
+#include <vector>
 
 #if KIRA_HAS_MNN
 #include <MNN/Interpreter.hpp>
@@ -41,6 +42,30 @@ jlongArray makeLoadResult(
         gpuEnabled ? 1L : 0L,
     };
     env->SetLongArrayRegion(result, 0, 3, values);
+    return result;
+}
+
+jlongArray makePrepareResult(
+    JNIEnv* env,
+    NativeError error,
+    jint imageWidth = 0,
+    jint imageHeight = 0,
+    jint latentWidth = 0,
+    jint latentHeight = 0
+) {
+    jlongArray result = env->NewLongArray(5);
+    if (result == nullptr) {
+        return nullptr;
+    }
+
+    const jlong values[5] = {
+        static_cast<jlong>(error),
+        static_cast<jlong>(imageWidth),
+        static_cast<jlong>(imageHeight),
+        static_cast<jlong>(latentWidth),
+        static_cast<jlong>(latentHeight),
+    };
+    env->SetLongArrayRegion(result, 0, 5, values);
     return result;
 }
 
@@ -401,6 +426,129 @@ bool appendTensorMap(
     return true;
 }
 
+bool tensorShapeEquals(
+    const MNN::Tensor* tensor,
+    const std::vector<int>& expected
+) {
+    if (tensor == nullptr) {
+        return false;
+    }
+    return tensor->shape() == expected;
+}
+
+bool resizeInputsAndSession(
+    MNN::Interpreter* interpreter,
+    MNN::Session* session,
+    const std::vector<std::pair<const char*, std::vector<int>>>& inputs
+) {
+    if (interpreter == nullptr || session == nullptr) {
+        return false;
+    }
+
+    for (const auto& input : inputs) {
+        MNN::Tensor* tensor = interpreter->getSessionInput(
+            session,
+            input.first
+        );
+        if (tensor == nullptr) {
+            return false;
+        }
+        interpreter->resizeTensor(tensor, input.second);
+    }
+
+    interpreter->resizeSession(session);
+
+    int resizeStatus = -1;
+    if (!interpreter->getSessionInfo(
+        session,
+        MNN::Interpreter::RESIZE_STATUS,
+        &resizeStatus
+    )) {
+        return false;
+    }
+    return resizeStatus == 0;
+}
+
+bool preparePisaGraph(
+    PisaModelBundle& bundle,
+    int imageWidth,
+    int imageHeight,
+    int& latentWidth,
+    int& latentHeight
+) {
+    if (
+        imageWidth <= 0 ||
+        imageHeight <= 0 ||
+        imageWidth % 8 != 0 ||
+        imageHeight % 8 != 0
+    ) {
+        return false;
+    }
+
+    latentWidth = imageWidth / 8;
+    latentHeight = imageHeight / 8;
+
+    if (!resizeInputsAndSession(
+        bundle.vaeEncoder.get(),
+        bundle.vaeEncoderSession,
+        {
+            {"image", {1, 3, imageHeight, imageWidth}},
+        }
+    )) {
+        return false;
+    }
+
+    if (!tensorShapeEquals(
+        bundle.vaeEncoder->getSessionOutput(
+            bundle.vaeEncoderSession,
+            "moments"
+        ),
+        {1, 8, latentHeight, latentWidth}
+    )) {
+        return false;
+    }
+
+    if (!resizeInputsAndSession(
+        bundle.unet.get(),
+        bundle.unetSession,
+        {
+            {"latent", {1, 4, latentHeight, latentWidth}},
+            {"timestep", {1}},
+            {"encoder_hidden_states", {1, 77, 1024}},
+        }
+    )) {
+        return false;
+    }
+
+    if (!tensorShapeEquals(
+        bundle.unet->getSessionOutput(
+            bundle.unetSession,
+            "model_pred"
+        ),
+        {1, 4, latentHeight, latentWidth}
+    )) {
+        return false;
+    }
+
+    if (!resizeInputsAndSession(
+        bundle.vaeDecoder.get(),
+        bundle.vaeDecoderSession,
+        {
+            {"latent", {1, 4, latentHeight, latentWidth}},
+        }
+    )) {
+        return false;
+    }
+
+    return tensorShapeEquals(
+        bundle.vaeDecoder->getSessionOutput(
+            bundle.vaeDecoderSession,
+            "image"
+        ),
+        {1, 3, imageHeight, imageWidth}
+    );
+}
+
 bool appendGraphInfo(
     std::string& output,
     const char* graph,
@@ -549,6 +697,60 @@ Java_com_ikegami99_kiraenhance_inference_mnn_MnnPisaNativeBridge_nativeGraphInfo
 #else
     (void)handle;
     return env->NewStringUTF("");
+#endif
+}
+
+extern "C" JNIEXPORT jlongArray JNICALL
+Java_com_ikegami99_kiraenhance_inference_mnn_MnnPisaNativeBridge_nativePrepareGraph(
+    JNIEnv* env,
+    jobject /* thiz */,
+    jlong handle,
+    jint imageWidth,
+    jint imageHeight
+) {
+#if KIRA_HAS_MNN
+    if (
+        handle == 0L ||
+        imageWidth <= 0 ||
+        imageHeight <= 0 ||
+        imageWidth % 8 != 0 ||
+        imageHeight % 8 != 0
+    ) {
+        return makePrepareResult(env, NativeError::INVALID_ARGUMENT);
+    }
+
+    auto* bundle = reinterpret_cast<PisaModelBundle*>(
+        static_cast<std::intptr_t>(handle)
+    );
+    if (bundle == nullptr) {
+        return makePrepareResult(env, NativeError::INVALID_ARGUMENT);
+    }
+
+    int latentWidth = 0;
+    int latentHeight = 0;
+    if (!preparePisaGraph(
+        *bundle,
+        imageWidth,
+        imageHeight,
+        latentWidth,
+        latentHeight
+    )) {
+        return makePrepareResult(env, NativeError::LOAD_FAILED);
+    }
+
+    return makePrepareResult(
+        env,
+        NativeError::NONE,
+        imageWidth,
+        imageHeight,
+        latentWidth,
+        latentHeight
+    );
+#else
+    (void)handle;
+    (void)imageWidth;
+    (void)imageHeight;
+    return makePrepareResult(env, NativeError::NOT_IMPLEMENTED);
 #endif
 }
 

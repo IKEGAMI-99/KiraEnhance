@@ -303,6 +303,103 @@ const char* sessionInfoForBackend(MNNForwardType backend) {
     }
 }
 
+void appendHex(std::string& output, const std::string& value) {
+    static constexpr char HEX[] = "0123456789abcdef";
+    for (unsigned char byte : value) {
+        output.push_back(HEX[(byte >> 4) & 0x0f]);
+        output.push_back(HEX[byte & 0x0f]);
+    }
+}
+
+bool appendTensorInfo(
+    std::string& output,
+    const char* graph,
+    const char* role,
+    const std::string& name,
+    MNN::Tensor* tensor
+) {
+    if (tensor == nullptr || name.empty()) {
+        return false;
+    }
+
+    if (!output.empty()) {
+        output.push_back('\n');
+    }
+
+    output += "graph=";
+    output += graph;
+    output += ";role=";
+    output += role;
+    output += ";nameHex=";
+    appendHex(output, name);
+    output += ";shape=";
+
+    const auto shape = tensor->shape();
+    for (std::size_t index = 0; index < shape.size(); ++index) {
+        if (index > 0) {
+            output.push_back(',');
+        }
+        output += std::to_string(shape[index]);
+    }
+
+    const auto type = tensor->getType();
+    output += ";type=";
+    output += std::to_string(static_cast<unsigned int>(type.code));
+    output.push_back(',');
+    output += std::to_string(static_cast<unsigned int>(type.bits));
+    output.push_back(',');
+    output += std::to_string(static_cast<unsigned int>(type.lanes));
+    output += ";dim=";
+    output += std::to_string(
+        static_cast<int>(tensor->getDimensionType())
+    );
+    return true;
+}
+
+template <typename TensorMap>
+bool appendTensorMap(
+    std::string& output,
+    const char* graph,
+    const char* role,
+    const TensorMap& tensors
+) {
+    for (const auto& entry : tensors) {
+        if (!appendTensorInfo(
+            output,
+            graph,
+            role,
+            entry.first,
+            entry.second
+        )) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool appendGraphInfo(
+    std::string& output,
+    const char* graph,
+    MNN::Interpreter* interpreter,
+    MNN::Session* session
+) {
+    if (interpreter == nullptr || session == nullptr) {
+        return false;
+    }
+
+    return appendTensorMap(
+        output,
+        graph,
+        "input",
+        interpreter->getSessionInputAll(session)
+    ) && appendTensorMap(
+        output,
+        graph,
+        "output",
+        interpreter->getSessionOutputAll(session)
+    );
+}
+
 #endif
 
 }  // namespace
@@ -382,6 +479,52 @@ Java_com_ikegami99_kiraenhance_inference_mnn_MnnPisaNativeBridge_nativeLoadModel
 #else
     (void)preferGpu;
     return makeLoadResult(env, 0L, NativeError::LOAD_FAILED, false);
+#endif
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_ikegami99_kiraenhance_inference_mnn_MnnPisaNativeBridge_nativeGraphInfo(
+    JNIEnv* env,
+    jobject /* thiz */,
+    jlong handle
+) {
+#if KIRA_HAS_MNN
+    if (handle == 0L) {
+        return env->NewStringUTF("");
+    }
+
+    auto* bundle = reinterpret_cast<PisaModelBundle*>(
+        static_cast<std::intptr_t>(handle)
+    );
+
+    std::string output;
+    if (
+        !appendGraphInfo(
+            output,
+            "vae_encoder",
+            bundle->vaeEncoder.get(),
+            bundle->vaeEncoderSession
+        ) ||
+        !appendGraphInfo(
+            output,
+            "unet",
+            bundle->unet.get(),
+            bundle->unetSession
+        ) ||
+        !appendGraphInfo(
+            output,
+            "vae_decoder",
+            bundle->vaeDecoder.get(),
+            bundle->vaeDecoderSession
+        )
+    ) {
+        return env->NewStringUTF("");
+    }
+
+    return env->NewStringUTF(output.c_str());
+#else
+    (void)handle;
+    return env->NewStringUTF("");
 #endif
 }
 

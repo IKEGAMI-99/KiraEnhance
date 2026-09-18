@@ -6,6 +6,7 @@
 #include <memory>
 #include <new>
 #include <string>
+#include <utility>
 #include <vector>
 
 #if KIRA_HAS_MNN

@@ -17,6 +17,9 @@
 
 namespace {
 
+constexpr std::size_t EMPTY_PROMPT_FP16_BYTES =
+    static_cast<std::size_t>(1) * 77 * 1024 * 2;
+
 enum class NativeError : jlong {
     NONE = 0,
     LOAD_FAILED = 1,
@@ -634,6 +637,9 @@ Java_com_ikegami99_kiraenhance_inference_mnn_MnnPisaNativeBridge_nativeLoadModel
         return makeLoadResult(env, 0L, NativeError::OUT_OF_MEMORY, false);
     }
     if (promptResult != ArtifactReadResult::OK) {
+        return makeLoadResult(env, 0L, NativeError::LOAD_FAILED, false);
+    }
+    if (bundle->emptyPromptBytes != EMPTY_PROMPT_FP16_BYTES) {
         return makeLoadResult(env, 0L, NativeError::LOAD_FAILED, false);
     }
 

@@ -22,6 +22,12 @@ object MnnPisaNativeBridge : MnnPisaNativeApi {
 
     private external fun nativeGraphInfo(handle: Long): String
 
+    private external fun nativePrepareGraph(
+        handle: Long,
+        imageWidth: Int,
+        imageHeight: Int,
+    ): LongArray
+
     private external fun nativeInfer(
         handle: Long,
         inputPixels: ByteBuffer,
@@ -87,6 +93,29 @@ object MnnPisaNativeBridge : MnnPisaNativeApi {
                 MnnPisaTensorInfoCodec.decode(raw)
             }
         }.getOrNull()
+    }
+
+    override fun prepareGraph(
+        handle: Long,
+        imageWidth: Int,
+        imageHeight: Int,
+    ): MnnPisaNativePrepareResult = runCatching {
+        ensureNativeLibraryLoaded()
+        MnnPisaNativePrepareResultCodec.decode(
+            nativePrepareGraph(
+                handle = handle,
+                imageWidth = imageWidth,
+                imageHeight = imageHeight,
+            ),
+        )
+    }.getOrElse {
+        MnnPisaNativePrepareResult(
+            errorCode = MnnPisaNativeError.INTERNAL,
+            imageWidth = 0,
+            imageHeight = 0,
+            latentWidth = 0,
+            latentHeight = 0,
+        )
     }
 
     override fun infer(

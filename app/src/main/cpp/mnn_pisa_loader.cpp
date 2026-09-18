@@ -44,6 +44,30 @@ jlongArray makeLoadResult(
     return result;
 }
 
+jlongArray makeInferenceResult(
+    JNIEnv* env,
+    NativeError error,
+    jint outputWidth = 0,
+    jint outputHeight = 0,
+    jint outputRowStrideBytes = 0,
+    bool gpuUsed = false
+) {
+    jlongArray result = env->NewLongArray(5);
+    if (result == nullptr) {
+        return nullptr;
+    }
+
+    const jlong values[5] = {
+        static_cast<jlong>(error),
+        static_cast<jlong>(outputWidth),
+        static_cast<jlong>(outputHeight),
+        static_cast<jlong>(outputRowStrideBytes),
+        gpuUsed ? 1L : 0L,
+    };
+    env->SetLongArrayRegion(result, 0, 5, values);
+    return result;
+}
+
 class ScopedUtfChars {
 public:
     ScopedUtfChars(JNIEnv* env, jstring value)
@@ -525,6 +549,87 @@ Java_com_ikegami99_kiraenhance_inference_mnn_MnnPisaNativeBridge_nativeGraphInfo
 #else
     (void)handle;
     return env->NewStringUTF("");
+#endif
+}
+
+extern "C" JNIEXPORT jlongArray JNICALL
+Java_com_ikegami99_kiraenhance_inference_mnn_MnnPisaNativeBridge_nativeInfer(
+    JNIEnv* env,
+    jobject /* thiz */,
+    jlong handle,
+    jobject inputPixels,
+    jint width,
+    jint height,
+    jint inputRowStrideBytes,
+    jobject outputPixels,
+    jlong outputCapacityBytes
+) {
+#if KIRA_HAS_MNN
+    if (
+        handle == 0L ||
+        inputPixels == nullptr ||
+        outputPixels == nullptr ||
+        width <= 0 ||
+        height <= 0 ||
+        inputRowStrideBytes < width * 4 ||
+        outputCapacityBytes <= 0
+    ) {
+        return makeInferenceResult(env, NativeError::INVALID_ARGUMENT);
+    }
+
+    auto* inputData = static_cast<std::uint8_t*>(
+        env->GetDirectBufferAddress(inputPixels)
+    );
+    auto* outputData = static_cast<std::uint8_t*>(
+        env->GetDirectBufferAddress(outputPixels)
+    );
+    const jlong inputCapacity = env->GetDirectBufferCapacity(inputPixels);
+    const jlong outputCapacity = env->GetDirectBufferCapacity(outputPixels);
+    if (
+        inputData == nullptr ||
+        outputData == nullptr ||
+        inputCapacity < 0 ||
+        outputCapacity < 0
+    ) {
+        return makeInferenceResult(env, NativeError::INVALID_ARGUMENT);
+    }
+
+    const jlong requiredInputBytes =
+        static_cast<jlong>(inputRowStrideBytes) * static_cast<jlong>(height);
+    if (
+        requiredInputBytes <= 0 ||
+        requiredInputBytes > inputCapacity ||
+        outputCapacityBytes > outputCapacity
+    ) {
+        return makeInferenceResult(env, NativeError::INVALID_ARGUMENT);
+    }
+
+    auto* bundle = reinterpret_cast<PisaModelBundle*>(
+        static_cast<std::intptr_t>(handle)
+    );
+    if (bundle == nullptr) {
+        return makeInferenceResult(env, NativeError::INVALID_ARGUMENT);
+    }
+
+    (void)inputData;
+    (void)outputData;
+    return makeInferenceResult(
+        env,
+        NativeError::NOT_IMPLEMENTED,
+        0,
+        0,
+        0,
+        isGpuBackend(bundle->backend)
+    );
+#else
+    (void)handle;
+    (void)inputPixels;
+    (void)width;
+    (void)height;
+    (void)inputRowStrideBytes;
+    (void)outputPixels;
+    (void)outputCapacityBytes;
+    return makeInferenceResult(env, NativeError::NOT_IMPLEMENTED);
 #endif
 }
 

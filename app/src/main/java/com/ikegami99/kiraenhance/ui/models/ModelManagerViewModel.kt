@@ -21,6 +21,7 @@ import com.ikegami99.kiraenhance.download.ModelDownloadWorker
 import com.ikegami99.kiraenhance.inference.ModelLoadResult
 import com.ikegami99.kiraenhance.inference.mnn.MnnPisaGraphContractValidator
 import com.ikegami99.kiraenhance.inference.mnn.MnnPisaGraphShapeValidator
+import com.ikegami99.kiraenhance.inference.mnn.MnnPisaNativeError
 import com.ikegami99.kiraenhance.inference.mnn.MnnPisaUpscaleEngine
 import com.ikegami99.kiraenhance.inference.mnn.PisaModelRequestFactory
 import com.ikegami99.kiraenhance.model.InstalledModelStore
@@ -354,13 +355,35 @@ class ModelManagerViewModel(
                             "MNNテンソルshapeがPiSA exporterと一致しません: " +
                                 (shapeContract.conciseProblem() ?: "unknown mismatch")
                         }
+                        val prepared = engine.prepareGraph(
+                            imageWidth = PISA_PROBE_SIZE,
+                            imageHeight = PISA_PROBE_SIZE,
+                        )
+                        logger.log(
+                            "PiSAProbe",
+                            "prepare error=${prepared.errorCode} " +
+                                "image=${prepared.imageWidth}x${prepared.imageHeight} " +
+                                "latent=${prepared.latentWidth}x${prepared.latentHeight}",
+                        )
+                        check(prepared.errorCode == MnnPisaNativeError.NONE) {
+                            "PiSA-SR MNNグラフを${PISA_PROBE_SIZE}x${PISA_PROBE_SIZE}へ準備できませんでした: " +
+                                prepared.errorCode
+                        }
+                        check(
+                            prepared.imageWidth == PISA_PROBE_SIZE &&
+                                prepared.imageHeight == PISA_PROBE_SIZE &&
+                                prepared.latentWidth == PISA_PROBE_SIZE / 8 &&
+                                prepared.latentHeight == PISA_PROBE_SIZE / 8
+                        ) {
+                            "PiSA-SR MNNグラフ準備後のshapeが不正です"
+                        }
                         logger.log(
                             "PiSAProbe",
                             "success backend=${session.backend.name.lowercase()} " +
                                 "gpu=${loadResult.gpuEnabled} tensors=${tensors.size}",
                         )
                         "診断完了: ${session.backend.name} / " +
-                            "${tensors.size} tensors / contract+shape OK"
+                            "${tensors.size} tensors / 512x512 prepare OK"
                     }
 
                     is ModelLoadResult.Failed -> {
@@ -654,6 +677,7 @@ class ModelManagerViewModel(
 
     private companion object {
         const val PISA_MODEL_ID = "pisa-sr"
+        const val PISA_PROBE_SIZE = 512
     }
 }
 

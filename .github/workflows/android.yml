@@ -15,6 +15,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Test PiSA export tooling
+        run: python3 -m unittest discover -s tools/pisa_export/tests -v
+
       - name: Set up JDK 17
         uses: actions/setup-java@v5
         with:

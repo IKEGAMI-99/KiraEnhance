@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <limits>
 #include <vector>
 
@@ -58,8 +59,13 @@ bool requiresTiling(
         return false;
     }
 
-    return imageWidth > tileSize ||
-        imageHeight > tileSize;
+    const std::int64_t imageArea =
+        static_cast<std::int64_t>(imageWidth) *
+        static_cast<std::int64_t>(imageHeight);
+    const std::int64_t tileArea =
+        static_cast<std::int64_t>(tileSize) *
+        static_cast<std::int64_t>(tileSize);
+    return imageArea > tileArea;
 }
 
 bool buildTilePlan(

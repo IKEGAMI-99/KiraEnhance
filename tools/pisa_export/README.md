@@ -70,10 +70,19 @@ The current Android runtime is pinned to MNN 3.6.1. Prefer an MNNConvert
 3.6.1 build for the first correctness baseline and record its exact
 `--version` output in `export_manifest.json`.
 
-The baseline exporter requires CUDA. This is intentional: the fused SD2.1
-UNet is large, and CPU FP16 export is not the path being validated here.
-Quantization is also intentionally deferred until the FP16 baseline has been
-compared numerically.
+The exporter supports two tracing paths. With `--export-precision auto`
+(the default), CUDA devices trace the ONNX graphs in FP16, while CPU and MPS
+devices trace in FP32. Explicit FP16 tracing is restricted to CUDA because
+CPU/MPS FP16 operator coverage is not the baseline being validated here.
+
+CPU export is therefore supported as the portable fallback. It is slower and
+uses more memory for the fused SD2.1 UNet, but it avoids requiring an NVIDIA
+GPU. MPS may also be selected when the installed PyTorch build reports it as
+available; if an ONNX tracing operator is unsupported there, use CPU instead.
+
+Regardless of ONNX tracing precision, the final baseline MNN conversion still
+uses `MNNConvert --fp16` for weight storage. Quantization below FP16 remains
+a later milestone after numerical comparison.
 
 ## Build MNNConvert 3.6.1
 
@@ -99,7 +108,21 @@ python tools/pisa_export/export_pisa_sr.py \
   --pisa-checkpoint /abs/path/pisa_sr.pkl \
   --mnnconvert /abs/path/MNN/build/MNNConvert \
   --output-dir /abs/path/kiraenhance-pisa-export \
-  --device cuda
+  --device cuda \
+  --export-precision auto
+```
+
+With CUDA and `auto`, tracing uses FP16. For a machine without CUDA, use:
+
+```bash
+python tools/pisa_export/export_pisa_sr.py \
+  --pisa-repo /abs/path/PiSA-SR \
+  --sd21-base /abs/path/stable-diffusion-2-1-base \
+  --pisa-checkpoint /abs/path/pisa_sr.pkl \
+  --mnnconvert /abs/path/MNN/build/MNNConvert \
+  --output-dir /abs/path/kiraenhance-pisa-export \
+  --device cpu \
+  --export-precision fp32
 ```
 
 The default dummy export image is `512x512`. The ONNX image/latent spatial
@@ -124,6 +147,7 @@ the final mobile-size target.
 - PiSA repository path and Git commit when available
 - MNNConvert version
 - ONNX opset
+- export device and ONNX tracing precision
 - timestep `1`
 - empty prompt
 - VAE scaling factor

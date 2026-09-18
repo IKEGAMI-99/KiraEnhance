@@ -110,6 +110,29 @@ class MnnPisaUpscaleEngine(
         }
     }
 
+    fun smokeGraph(
+        imageWidth: Int,
+        imageHeight: Int,
+    ): MnnPisaNativeSmokeResult {
+        val handle = nativeHandle
+        if (handle == 0L || loadedRequest == null) {
+            return smokeFailure(MnnPisaNativeError.LOAD_FAILED)
+        }
+        if (imageWidth <= 0 || imageHeight <= 0) {
+            return smokeFailure(MnnPisaNativeError.INVALID_ARGUMENT)
+        }
+
+        return runCatching {
+            nativeApi.smokeGraph(
+                handle = handle,
+                imageWidth = imageWidth,
+                imageHeight = imageHeight,
+            )
+        }.getOrElse {
+            smokeFailure(MnnPisaNativeError.INTERNAL)
+        }
+    }
+
     override fun progress(): UpscaleProgress = currentProgress
 
     override fun upscale(
@@ -245,6 +268,12 @@ class MnnPisaUpscaleEngine(
         imageHeight = 0,
         latentWidth = 0,
         latentHeight = 0,
+    )
+
+    private fun smokeFailure(error: MnnPisaNativeError) = MnnPisaNativeSmokeResult(
+        errorCode = error,
+        completedStages = 0,
+        outputFinite = false,
     )
 
     private fun mapInferenceError(error: MnnPisaNativeError): EngineErrorCode = when (error) {

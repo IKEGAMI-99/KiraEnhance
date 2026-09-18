@@ -1,9 +1,11 @@
 #include <jni.h>
 
 #include "mnn_pisa_tensor_io.h"
+#include "pisa_adain.h"
 #include "pisa_denoise_math.h"
 #include "pisa_gaussian_noise.h"
 #include "pisa_latent_math.h"
+#include "pisa_image_tensor.h"
 #include "pisa_resize_plan.h"
 
 #include <cmath>
@@ -28,6 +30,9 @@ constexpr std::size_t EMPTY_PROMPT_FP16_BYTES =
 constexpr float VAE_SCALING_FACTOR = 0.18215f;
 constexpr std::int64_t PISA_TIMESTEP = 1;
 constexpr std::uint64_t SMOKE_NOISE_SEED = 0x50495341534d4f4bULL;
+constexpr std::uint64_t INFERENCE_NOISE_SEED = 42ULL;
+constexpr std::size_t MAX_MONOLITHIC_MODEL_PIXELS =
+    static_cast<std::size_t>(1024) * 1024;
 constexpr int SMOKE_SOURCE_WIDTH = 2;
 constexpr int SMOKE_SOURCE_HEIGHT = 2;
 constexpr int SMOKE_SOURCE_STRIDE = SMOKE_SOURCE_WIDTH * 4;
@@ -1168,8 +1173,9 @@ Java_com_ikegami99_kiraenhance_inference_mnn_MnnPisaNativeBridge_nativeInfer(
         handle == 0L ||
         inputPixels == nullptr ||
         outputPixels == nullptr ||
-        width <= 0 ||
-        height <= 0 ||
+        width <= 1 ||
+        height <= 1 ||
+        width > std::numeric_limits<int>::max() / 4 ||
         inputRowStrideBytes < width * 4 ||
         outputCapacityBytes <= 0
     ) {
@@ -1215,14 +1221,25 @@ Java_com_ikegami99_kiraenhance_inference_mnn_MnnPisaNativeBridge_nativeInfer(
         return makeInferenceResult(env, NativeError::INVALID_ARGUMENT);
     }
 
-    const jlong requiredOutputBytes =
-        static_cast<jlong>(resizePlan.outputWidth) *
-        static_cast<jlong>(resizePlan.outputHeight) *
-        4L;
+    const std::int64_t outputWidth64 =
+        static_cast<std::int64_t>(resizePlan.outputWidth);
+    const std::int64_t outputHeight64 =
+        static_cast<std::int64_t>(resizePlan.outputHeight);
     if (
-        requiredOutputBytes <= 0 ||
-        outputCapacityBytes < requiredOutputBytes
+        outputWidth64 <= 0 ||
+        outputHeight64 <= 0 ||
+        outputWidth64 >
+            std::numeric_limits<std::int64_t>::max() /
+                outputHeight64 /
+                4
     ) {
+        return makeInferenceResult(env, NativeError::OUT_OF_MEMORY);
+    }
+
+    const jlong requiredOutputBytes = static_cast<jlong>(
+        outputWidth64 * outputHeight64 * 4
+    );
+    if (outputCapacityBytes < requiredOutputBytes) {
         return makeInferenceResult(env, NativeError::INVALID_ARGUMENT);
     }
 
@@ -1245,16 +1262,242 @@ Java_com_ikegami99_kiraenhance_inference_mnn_MnnPisaNativeBridge_nativeInfer(
         );
     }
 
-    (void)inputData;
-    (void)outputData;
-    (void)latentWidth;
-    (void)latentHeight;
+    // The first real-image milestone intentionally supports only the
+    // upstream common path: no minimum-size preboost and no post-model
+    // exact-size correction. Small/odd inputs remain blocked until those
+    // resize stages and tiled execution are implemented.
+    if (
+        resizePlan.smallInputBoosted ||
+        resizePlan.modelWidth != resizePlan.outputWidth ||
+        resizePlan.modelHeight != resizePlan.outputHeight
+    ) {
+        return makeInferenceResult(
+            env,
+            NativeError::NOT_IMPLEMENTED,
+            0,
+            0,
+            0,
+            isGpuBackend(bundle->backend)
+        );
+    }
+
+    std::size_t modelPixels = 0;
+    std::size_t imageCount = 0;
+    if (
+        !checkedElementCount(
+            {
+                static_cast<std::size_t>(resizePlan.modelHeight),
+                static_cast<std::size_t>(resizePlan.modelWidth),
+            },
+            modelPixels
+        ) ||
+        !checkedElementCount(
+            {3U, modelPixels},
+            imageCount
+        )
+    ) {
+        return makeInferenceResult(
+            env,
+            NativeError::OUT_OF_MEMORY,
+            0,
+            0,
+            0,
+            isGpuBackend(bundle->backend)
+        );
+    }
+
+    if (modelPixels > MAX_MONOLITHIC_MODEL_PIXELS) {
+        return makeInferenceResult(
+            env,
+            NativeError::NOT_IMPLEMENTED,
+            0,
+            0,
+            0,
+            isGpuBackend(bundle->backend)
+        );
+    }
+
+    MNN::Tensor* encoderInput =
+        bundle->vaeEncoder->getSessionInput(
+            bundle->vaeEncoderSession,
+            "image"
+        );
+    if (
+        !kira::pisa::writeRgba8888BicubicNormalizedTensor(
+            encoderInput,
+            inputData,
+            width,
+            height,
+            inputRowStrideBytes
+        )
+    ) {
+        return makeInferenceResult(
+            env,
+            NativeError::INFERENCE_FAILED,
+            0,
+            0,
+            0,
+            isGpuBackend(bundle->backend)
+        );
+    }
+
+    std::unique_ptr<float[]> sourceImage(
+        new (std::nothrow) float[imageCount]
+    );
+    std::unique_ptr<float[]> decodedImage(
+        new (std::nothrow) float[imageCount]
+    );
+    if (!sourceImage || !decodedImage) {
+        return makeInferenceResult(
+            env,
+            NativeError::OUT_OF_MEMORY,
+            0,
+            0,
+            0,
+            isGpuBackend(bundle->backend)
+        );
+    }
+
+    if (
+        !kira::pisa::readFloatNchwTensor(
+            encoderInput,
+            sourceImage.get(),
+            imageCount
+        )
+    ) {
+        return makeInferenceResult(
+            env,
+            NativeError::INFERENCE_FAILED,
+            0,
+            0,
+            0,
+            isGpuBackend(bundle->backend)
+        );
+    }
+
+    int completedStages = 0;
+    const NativeError graphResult = runPisaPreparedGraph(
+        *bundle,
+        latentWidth,
+        latentHeight,
+        INFERENCE_NOISE_SEED,
+        completedStages
+    );
+    if (graphResult != NativeError::NONE || completedStages != 3) {
+        return makeInferenceResult(
+            env,
+            graphResult == NativeError::NONE
+                ? NativeError::INFERENCE_FAILED
+                : graphResult,
+            0,
+            0,
+            0,
+            isGpuBackend(bundle->backend)
+        );
+    }
+
+    const MNN::Tensor* decoderOutput =
+        bundle->vaeDecoder->getSessionOutput(
+            bundle->vaeDecoderSession,
+            "image"
+        );
+    if (
+        !kira::pisa::readFloatNchwTensor(
+            decoderOutput,
+            decodedImage.get(),
+            imageCount
+        )
+    ) {
+        return makeInferenceResult(
+            env,
+            NativeError::INFERENCE_FAILED,
+            0,
+            0,
+            0,
+            isGpuBackend(bundle->backend)
+        );
+    }
+
+    for (std::size_t index = 0; index < imageCount; ++index) {
+        const float sourceValue = sourceImage[index];
+        const float decodedValue = decodedImage[index];
+        if (
+            !std::isfinite(sourceValue) ||
+            !std::isfinite(decodedValue)
+        ) {
+            return makeInferenceResult(
+                env,
+                NativeError::INFERENCE_FAILED,
+                0,
+                0,
+                0,
+                isGpuBackend(bundle->backend)
+            );
+        }
+
+        sourceImage[index] = std::clamp(
+            sourceValue * 0.5f + 0.5f,
+            0.0f,
+            1.0f
+        );
+        decodedImage[index] = std::clamp(
+            decodedValue * 0.5f + 0.5f,
+            0.0f,
+            1.0f
+        );
+    }
+
+    if (
+        !kira::pisa::adainColorFixRgbPlanar(
+            decodedImage.get(),
+            modelPixels,
+            sourceImage.get(),
+            modelPixels,
+            decodedImage.get()
+        )
+    ) {
+        return makeInferenceResult(
+            env,
+            NativeError::INFERENCE_FAILED,
+            0,
+            0,
+            0,
+            isGpuBackend(bundle->backend)
+        );
+    }
+
+    for (std::size_t index = 0; index < imageCount; ++index) {
+        decodedImage[index] =
+            decodedImage[index] * 2.0f - 1.0f;
+    }
+
+    const int outputRowStrideBytes = resizePlan.outputWidth * 4;
+    if (
+        !kira::pisa::normalizedNchwToRgba8888(
+            decodedImage.get(),
+            resizePlan.outputWidth,
+            resizePlan.outputHeight,
+            outputData,
+            outputRowStrideBytes,
+            static_cast<std::size_t>(requiredOutputBytes)
+        )
+    ) {
+        return makeInferenceResult(
+            env,
+            NativeError::INFERENCE_FAILED,
+            0,
+            0,
+            0,
+            isGpuBackend(bundle->backend)
+        );
+    }
+
     return makeInferenceResult(
         env,
-        NativeError::NOT_IMPLEMENTED,
-        0,
-        0,
-        0,
+        NativeError::NONE,
+        resizePlan.outputWidth,
+        resizePlan.outputHeight,
+        outputRowStrideBytes,
         isGpuBackend(bundle->backend)
     );
 #else

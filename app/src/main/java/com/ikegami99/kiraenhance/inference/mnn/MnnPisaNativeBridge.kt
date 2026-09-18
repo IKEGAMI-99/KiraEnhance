@@ -28,6 +28,12 @@ object MnnPisaNativeBridge : MnnPisaNativeApi {
         imageHeight: Int,
     ): LongArray
 
+    private external fun nativeSmokeGraph(
+        handle: Long,
+        imageWidth: Int,
+        imageHeight: Int,
+    ): LongArray
+
     private external fun nativeInfer(
         handle: Long,
         inputPixels: ByteBuffer,
@@ -115,6 +121,27 @@ object MnnPisaNativeBridge : MnnPisaNativeApi {
             imageHeight = 0,
             latentWidth = 0,
             latentHeight = 0,
+        )
+    }
+
+    override fun smokeGraph(
+        handle: Long,
+        imageWidth: Int,
+        imageHeight: Int,
+    ): MnnPisaNativeSmokeResult = runCatching {
+        ensureNativeLibraryLoaded()
+        MnnPisaNativeSmokeResultCodec.decode(
+            nativeSmokeGraph(
+                handle = handle,
+                imageWidth = imageWidth,
+                imageHeight = imageHeight,
+            ),
+        )
+    }.getOrElse {
+        MnnPisaNativeSmokeResult(
+            errorCode = MnnPisaNativeError.INTERNAL,
+            completedStages = 0,
+            outputFinite = false,
         )
     }
 

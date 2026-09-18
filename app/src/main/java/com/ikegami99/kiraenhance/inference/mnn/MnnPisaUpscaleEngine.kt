@@ -16,6 +16,7 @@ import java.nio.ByteBuffer
 
 class MnnPisaUpscaleEngine(
     private val nativeApi: MnnPisaNativeApi = MnnPisaNativeBridge,
+    private val onDiagnostics: (MnnPisaDiagnosticsSnapshot) -> Unit = {},
 ) : UpscaleEngine {
     private var nativeHandle: Long = 0L
     private var loadedRequest: ModelLoadRequest? = null
@@ -73,6 +74,11 @@ class MnnPisaUpscaleEngine(
                 nativeApi.graphInfo(nativeResult.handle)?.toList()
             }.getOrNull(),
         )
+        diagnosticsSnapshot?.let { snapshot ->
+            runCatching {
+                onDiagnostics(snapshot)
+            }
+        }
         currentProgress = UpscaleProgress()
         return ModelLoadResult.Loaded(gpuEnabled = nativeResult.gpuEnabled)
     }

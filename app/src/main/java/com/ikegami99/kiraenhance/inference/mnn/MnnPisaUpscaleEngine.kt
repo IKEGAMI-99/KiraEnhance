@@ -19,6 +19,7 @@ class MnnPisaUpscaleEngine(
 ) : UpscaleEngine {
     private var nativeHandle: Long = 0L
     private var loadedRequest: ModelLoadRequest? = null
+    private var diagnosticsSnapshot: MnnPisaDiagnosticsSnapshot? = null
     private var currentProgress = UpscaleProgress()
 
     override fun load(request: ModelLoadRequest): ModelLoadResult {
@@ -63,11 +64,22 @@ class MnnPisaUpscaleEngine(
 
         nativeHandle = nativeResult.handle
         loadedRequest = request
+        diagnosticsSnapshot = MnnPisaDiagnosticsSnapshot(
+            modelVersion = request.version,
+            sessionInfo = runCatching {
+                nativeApi.sessionInfo(nativeResult.handle)
+            }.getOrNull(),
+            tensorInfo = runCatching {
+                nativeApi.graphInfo(nativeResult.handle)?.toList()
+            }.getOrNull(),
+        )
         currentProgress = UpscaleProgress()
         return ModelLoadResult.Loaded(gpuEnabled = nativeResult.gpuEnabled)
     }
 
     override fun isLoaded(): Boolean = nativeHandle != 0L && loadedRequest != null
+
+    fun diagnostics(): MnnPisaDiagnosticsSnapshot? = diagnosticsSnapshot
 
     override fun progress(): UpscaleProgress = currentProgress
 
@@ -173,6 +185,7 @@ class MnnPisaUpscaleEngine(
         val handle = nativeHandle
         nativeHandle = 0L
         loadedRequest = null
+        diagnosticsSnapshot = null
         currentProgress = UpscaleProgress()
         if (handle != 0L) {
             nativeApi.unload(handle)

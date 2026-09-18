@@ -54,7 +54,7 @@ object MnnPisaNativeBridge : MnnPisaNativeApi {
         nativeLoadFailure()
     }
 
-    fun sessionInfo(handle: Long): MnnPisaSessionInfo? {
+    override fun sessionInfo(handle: Long): MnnPisaSessionInfo? {
         if (handle == 0L) {
             return null
         }
@@ -64,7 +64,7 @@ object MnnPisaNativeBridge : MnnPisaNativeApi {
         }.getOrNull()
     }
 
-    fun graphInfo(handle: Long): List<MnnPisaTensorInfo>? {
+    override fun graphInfo(handle: Long): List<MnnPisaTensorInfo>? {
         if (handle == 0L) {
             return null
         }

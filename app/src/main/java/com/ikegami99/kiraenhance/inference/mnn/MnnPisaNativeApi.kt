@@ -27,6 +27,12 @@ data class MnnPisaNativeInferenceResult(
     val gpuUsed: Boolean,
 )
 
+data class MnnPisaDiagnosticsSnapshot(
+    val modelVersion: String,
+    val sessionInfo: MnnPisaSessionInfo?,
+    val tensorInfo: List<MnnPisaTensorInfo>?,
+)
+
 interface MnnPisaNativeApi {
     fun loadModel(
         vaeEncoderPath: String,
@@ -35,6 +41,10 @@ interface MnnPisaNativeApi {
         emptyPromptPath: String,
         preferGpu: Boolean,
     ): MnnPisaNativeLoadResult
+
+    fun sessionInfo(handle: Long): MnnPisaSessionInfo? = null
+
+    fun graphInfo(handle: Long): List<MnnPisaTensorInfo>? = null
 
     fun infer(
         handle: Long,

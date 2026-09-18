@@ -87,6 +87,29 @@ class MnnPisaUpscaleEngine(
 
     fun diagnostics(): MnnPisaDiagnosticsSnapshot? = diagnosticsSnapshot
 
+    fun prepareGraph(
+        imageWidth: Int,
+        imageHeight: Int,
+    ): MnnPisaNativePrepareResult {
+        val handle = nativeHandle
+        if (handle == 0L || loadedRequest == null) {
+            return prepareFailure(MnnPisaNativeError.LOAD_FAILED)
+        }
+        if (imageWidth <= 0 || imageHeight <= 0) {
+            return prepareFailure(MnnPisaNativeError.INVALID_ARGUMENT)
+        }
+
+        return runCatching {
+            nativeApi.prepareGraph(
+                handle = handle,
+                imageWidth = imageWidth,
+                imageHeight = imageHeight,
+            )
+        }.getOrElse {
+            prepareFailure(MnnPisaNativeError.INTERNAL)
+        }
+    }
+
     override fun progress(): UpscaleProgress = currentProgress
 
     override fun upscale(
@@ -214,6 +237,14 @@ class MnnPisaUpscaleEngine(
 
     private fun failed(code: EngineErrorCode, message: String): UpscaleResult.Failed = UpscaleResult.Failed(
         EngineError(code = code, message = message),
+    )
+
+    private fun prepareFailure(error: MnnPisaNativeError) = MnnPisaNativePrepareResult(
+        errorCode = error,
+        imageWidth = 0,
+        imageHeight = 0,
+        latentWidth = 0,
+        latentHeight = 0,
     )
 
     private fun mapInferenceError(error: MnnPisaNativeError): EngineErrorCode = when (error) {

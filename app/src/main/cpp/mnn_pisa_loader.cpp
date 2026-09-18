@@ -7,6 +7,8 @@
 #include "pisa_latent_math.h"
 #include "pisa_image_tensor.h"
 #include "pisa_resize_plan.h"
+#include "pisa_tile_plan.h"
+#include "pisa_tiled_inference.h"
 
 #include <algorithm>
 #include <cmath>
@@ -34,6 +36,8 @@ constexpr std::uint64_t SMOKE_NOISE_SEED = 0x50495341534d4f4bULL;
 constexpr std::uint64_t INFERENCE_NOISE_SEED = 42ULL;
 constexpr std::size_t MAX_MONOLITHIC_MODEL_PIXELS =
     static_cast<std::size_t>(1024) * 1024;
+constexpr int PISA_UNET_TILE_SIZE = 96;
+constexpr int PISA_UNET_TILE_OVERLAP = 32;
 constexpr int SMOKE_SOURCE_WIDTH = 2;
 constexpr int SMOKE_SOURCE_HEIGHT = 2;
 constexpr int SMOKE_SOURCE_STRIDE = SMOKE_SOURCE_WIDTH * 4;
@@ -519,6 +523,36 @@ bool resizeInputsAndSession(
     return resizeStatus == 0;
 }
 
+bool prepareUnetGraph(
+    PisaModelBundle& bundle,
+    int latentWidth,
+    int latentHeight
+) {
+    if (latentWidth <= 0 || latentHeight <= 0) {
+        return false;
+    }
+
+    if (!resizeInputsAndSession(
+        bundle.unet.get(),
+        bundle.unetSession,
+        {
+            {"latent", {1, 4, latentHeight, latentWidth}},
+            {"timestep", {1}},
+            {"encoder_hidden_states", {1, 77, 1024}},
+        }
+    )) {
+        return false;
+    }
+
+    return tensorShapeEquals(
+        bundle.unet->getSessionOutput(
+            bundle.unetSession,
+            "model_pred"
+        ),
+        {1, 4, latentHeight, latentWidth}
+    );
+}
+
 bool preparePisaGraph(
     PisaModelBundle& bundle,
     int imageWidth,
@@ -558,24 +592,35 @@ bool preparePisaGraph(
         return false;
     }
 
-    if (!resizeInputsAndSession(
-        bundle.unet.get(),
-        bundle.unetSession,
-        {
-            {"latent", {1, 4, latentHeight, latentWidth}},
-            {"timestep", {1}},
-            {"encoder_hidden_states", {1, 77, 1024}},
+    int unetWidth = latentWidth;
+    int unetHeight = latentHeight;
+    if (
+        kira::pisa::requiresTiling(
+            latentWidth,
+            latentHeight,
+            PISA_UNET_TILE_SIZE
+        )
+    ) {
+        kira::pisa::TilePlan tilePlan;
+        if (
+            !kira::pisa::buildTilePlan(
+                latentWidth,
+                latentHeight,
+                PISA_UNET_TILE_SIZE,
+                PISA_UNET_TILE_OVERLAP,
+                tilePlan
+            )
+        ) {
+            return false;
         }
-    )) {
-        return false;
+        unetWidth = tilePlan.tileSize;
+        unetHeight = tilePlan.tileSize;
     }
 
-    if (!tensorShapeEquals(
-        bundle.unet->getSessionOutput(
-            bundle.unetSession,
-            "model_pred"
-        ),
-        {1, 4, latentHeight, latentWidth}
+    if (!prepareUnetGraph(
+        bundle,
+        unetWidth,
+        unetHeight
     )) {
         return false;
     }
@@ -626,6 +671,127 @@ NativeError mapMnnRunError(MNN::ErrorCode error) {
         default:
             return NativeError::INFERENCE_FAILED;
     }
+}
+
+bool writeUnetConditioning(PisaModelBundle& bundle) {
+    MNN::Tensor* timestep =
+        bundle.unet->getSessionInput(
+            bundle.unetSession,
+            "timestep"
+        );
+    MNN::Tensor* prompt =
+        bundle.unet->getSessionInput(
+            bundle.unetSession,
+            "encoder_hidden_states"
+        );
+    return kira::pisa::writeIntScalarTensor(
+        timestep,
+        PISA_TIMESTEP
+    ) && kira::pisa::writeFp16BytesNchwTensor(
+        prompt,
+        bundle.emptyPrompt.get(),
+        bundle.emptyPromptBytes
+    );
+}
+
+struct UnetTileContext {
+    PisaModelBundle* bundle = nullptr;
+    NativeError error = NativeError::NONE;
+};
+
+bool runUnetTileTransform(
+    const float* input,
+    std::size_t inputCount,
+    int channels,
+    int tileWidth,
+    int tileHeight,
+    float* output,
+    std::size_t outputCount,
+    void* rawContext
+) {
+    auto* context =
+        static_cast<UnetTileContext*>(rawContext);
+    if (
+        context == nullptr ||
+        context->bundle == nullptr ||
+        input == nullptr ||
+        output == nullptr ||
+        channels != 4 ||
+        tileWidth <= 0 ||
+        tileHeight <= 0
+    ) {
+        if (context != nullptr) {
+            context->error = NativeError::INVALID_ARGUMENT;
+        }
+        return false;
+    }
+
+    std::size_t expectedCount = 0;
+    if (
+        !checkedElementCount(
+            {
+                4U,
+                static_cast<std::size_t>(tileHeight),
+                static_cast<std::size_t>(tileWidth),
+            },
+            expectedCount
+        ) ||
+        inputCount != expectedCount ||
+        outputCount != expectedCount
+    ) {
+        context->error = NativeError::INVALID_ARGUMENT;
+        return false;
+    }
+
+    PisaModelBundle& bundle = *context->bundle;
+    MNN::Tensor* latent =
+        bundle.unet->getSessionInput(
+            bundle.unetSession,
+            "latent"
+        );
+    const MNN::Tensor* prediction =
+        bundle.unet->getSessionOutput(
+            bundle.unetSession,
+            "model_pred"
+        );
+    if (
+        !tensorShapeEquals(
+            latent,
+            {1, 4, tileHeight, tileWidth}
+        ) ||
+        !tensorShapeEquals(
+            prediction,
+            {1, 4, tileHeight, tileWidth}
+        ) ||
+        !kira::pisa::writeFloatNchwTensor(
+            latent,
+            input,
+            inputCount
+        )
+    ) {
+        context->error = NativeError::INFERENCE_FAILED;
+        return false;
+    }
+
+    const MNN::ErrorCode run =
+        bundle.unet->runSession(bundle.unetSession);
+    if (run != MNN::NO_ERROR) {
+        context->error = mapMnnRunError(run);
+        return false;
+    }
+
+    if (
+        !kira::pisa::readFloatNchwTensor(
+            prediction,
+            output,
+            outputCount
+        )
+    ) {
+        context->error = NativeError::INFERENCE_FAILED;
+        return false;
+    }
+
+    return true;
 }
 
 NativeError runPisaPreparedGraph(
@@ -718,58 +884,77 @@ NativeError runPisaPreparedGraph(
         return NativeError::INFERENCE_FAILED;
     }
 
-    MNN::Tensor* unetLatent =
-        bundle.unet->getSessionInput(
-            bundle.unetSession,
-            "latent"
-        );
-    MNN::Tensor* unetTimestep =
-        bundle.unet->getSessionInput(
-            bundle.unetSession,
-            "timestep"
-        );
-    MNN::Tensor* unetPrompt =
-        bundle.unet->getSessionInput(
-            bundle.unetSession,
-            "encoder_hidden_states"
-        );
-    if (
-        !kira::pisa::writeFloatNchwTensor(
-            unetLatent,
-            controlLatent.get(),
-            latentCount
-        ) ||
-        !kira::pisa::writeIntScalarTensor(
-            unetTimestep,
-            PISA_TIMESTEP
-        ) ||
-        !kira::pisa::writeFp16BytesNchwTensor(
-            unetPrompt,
-            bundle.emptyPrompt.get(),
-            bundle.emptyPromptBytes
-        )
-    ) {
+    if (!writeUnetConditioning(bundle)) {
         return NativeError::INFERENCE_FAILED;
     }
 
-    const MNN::ErrorCode unetRun =
-        bundle.unet->runSession(bundle.unetSession);
-    if (unetRun != MNN::NO_ERROR) {
-        return mapMnnRunError(unetRun);
+    if (
+        kira::pisa::requiresTiling(
+            latentWidth,
+            latentHeight,
+            PISA_UNET_TILE_SIZE
+        )
+    ) {
+        UnetTileContext tileContext;
+        tileContext.bundle = &bundle;
+        if (
+            !kira::pisa::runTiledPlanarTransform(
+                controlLatent.get(),
+                4,
+                latentWidth,
+                latentHeight,
+                PISA_UNET_TILE_SIZE,
+                PISA_UNET_TILE_OVERLAP,
+                runUnetTileTransform,
+                &tileContext,
+                modelPrediction.get(),
+                latentCount
+            )
+        ) {
+            return tileContext.error == NativeError::NONE
+                ? NativeError::INFERENCE_FAILED
+                : tileContext.error;
+        }
+    } else {
+        MNN::Tensor* unetLatent =
+            bundle.unet->getSessionInput(
+                bundle.unetSession,
+                "latent"
+            );
+        if (
+            !kira::pisa::writeFloatNchwTensor(
+                unetLatent,
+                controlLatent.get(),
+                latentCount
+            )
+        ) {
+            return NativeError::INFERENCE_FAILED;
+        }
+
+        const MNN::ErrorCode unetRun =
+            bundle.unet->runSession(bundle.unetSession);
+        if (unetRun != MNN::NO_ERROR) {
+            return mapMnnRunError(unetRun);
+        }
+
+        const MNN::Tensor* unetOutput =
+            bundle.unet->getSessionOutput(
+                bundle.unetSession,
+                "model_pred"
+            );
+        if (
+            !kira::pisa::readFloatNchwTensor(
+                unetOutput,
+                modelPrediction.get(),
+                latentCount
+            )
+        ) {
+            return NativeError::INFERENCE_FAILED;
+        }
     }
     completedStages = 2;
 
-    const MNN::Tensor* unetOutput =
-        bundle.unet->getSessionOutput(
-            bundle.unetSession,
-            "model_pred"
-        );
     if (
-        !kira::pisa::readFloatNchwTensor(
-            unetOutput,
-            modelPrediction.get(),
-            latentCount
-        ) ||
         !kira::pisa::buildDecoderLatent(
             controlLatent.get(),
             modelPrediction.get(),

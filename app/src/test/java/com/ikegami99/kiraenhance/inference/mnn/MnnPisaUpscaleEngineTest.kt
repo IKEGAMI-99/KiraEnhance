@@ -106,6 +106,59 @@ class MnnPisaUpscaleEngineTest {
     }
 
     @Test
+    fun `publishes diagnostics snapshot once after successful load`() {
+        val sessionInfo = MnnPisaSessionInfo(
+            backend = MnnPisaBackend.CPU,
+            gpuEnabled = false,
+        )
+        val tensorInfo = listOf(
+            MnnPisaTensorInfo(
+                graph = MnnPisaGraph.VAE_DECODER,
+                role = MnnTensorRole.OUTPUT,
+                name = "image",
+                shape = listOf(1, 3, 512, 512),
+                typeCode = 2,
+                typeBits = 16,
+                typeLanes = 1,
+                dimensionType = 1,
+            ),
+        )
+        val native = FakeMnnPisaNativeApi(
+            sessionInfo = sessionInfo,
+            graphInfo = tensorInfo,
+        )
+        val published = mutableListOf<MnnPisaDiagnosticsSnapshot>()
+        val engine = MnnPisaUpscaleEngine(
+            nativeApi = native,
+            onDiagnostics = published::add,
+        )
+
+        assertTrue(engine.load(request()) is ModelLoadResult.Loaded)
+
+        assertEquals(
+            listOf(
+                MnnPisaDiagnosticsSnapshot(
+                    modelVersion = "converted-test",
+                    sessionInfo = sessionInfo,
+                    tensorInfo = tensorInfo,
+                ),
+            ),
+            published,
+        )
+    }
+
+    @Test
+    fun `diagnostics callback failure does not fail model load`() {
+        val engine = MnnPisaUpscaleEngine(
+            nativeApi = FakeMnnPisaNativeApi(),
+            onDiagnostics = { error("logger unavailable") },
+        )
+
+        assertTrue(engine.load(request()) is ModelLoadResult.Loaded)
+        assertTrue(engine.isLoaded())
+    }
+
+    @Test
     fun `not implemented inference becomes typed failure instead of fake output`() {
         val native = FakeMnnPisaNativeApi(
             inferenceResult = MnnPisaNativeInferenceResult(

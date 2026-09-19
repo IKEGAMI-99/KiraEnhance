@@ -63,6 +63,12 @@
           "downloadUrl": "https://example.invalid/models/pisa-sr/empty_prompt.fp16",
           "fileSizeBytes": 1,
           "sha256": "4444444444444444444444444444444444444444444444444444444444444444"
+        },
+        {
+          "fileName": "vae_segments.pack",
+          "downloadUrl": "https://example.invalid/models/pisa-sr/vae_segments.pack",
+          "fileSizeBytes": 1,
+          "sha256": "5555555555555555555555555555555555555555555555555555555555555555"
         }
       ],
       "supportedScales": [

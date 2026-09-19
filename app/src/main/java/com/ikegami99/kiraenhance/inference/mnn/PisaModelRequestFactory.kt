@@ -48,12 +48,14 @@ object PisaModelRequestFactory : ModelRequestFactory {
     const val UNET_FILE = "unet_default.mnn"
     const val VAE_DECODER_FILE = "vae_decoder.mnn"
     const val EMPTY_PROMPT_FILE = "empty_prompt.fp16"
+    const val VAE_SEGMENT_PACK_FILE = "vae_segments.pack"
 
     val REQUIRED_ARTIFACTS = listOf(
         VAE_ENCODER_FILE,
         UNET_FILE,
         VAE_DECODER_FILE,
         EMPTY_PROMPT_FILE,
+        VAE_SEGMENT_PACK_FILE,
     )
 
     private const val MODEL_ID = "pisa-sr"

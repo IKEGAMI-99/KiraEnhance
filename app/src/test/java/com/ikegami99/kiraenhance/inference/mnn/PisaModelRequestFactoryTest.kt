@@ -26,6 +26,7 @@ class PisaModelRequestFactoryTest {
         assertEquals("/models/pisa/unet_default.mnn", request.artifact("unet_default.mnn")?.absolutePath)
         assertEquals("/models/pisa/vae_decoder.mnn", request.artifact("vae_decoder.mnn")?.absolutePath)
         assertEquals("/models/pisa/empty_prompt.fp16", request.artifact("empty_prompt.fp16")?.absolutePath)
+        assertEquals("/models/pisa/vae_segments.pack", request.artifact("vae_segments.pack")?.absolutePath)
     }
 
     @Test(expected = IllegalArgumentException::class)
@@ -47,6 +48,7 @@ class PisaModelRequestFactoryTest {
             artifact("unet_default.mnn", "b"),
             artifact("vae_decoder.mnn", "c"),
             artifact("empty_prompt.fp16", "d"),
+            artifact("vae_segments.pack", "e"),
         ),
         supportedScales = listOf(4),
         minAppVersion = "0.1.0",

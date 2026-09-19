@@ -10,7 +10,7 @@ class BundledModelManifestTest {
     private val parser = ModelManifestParser()
 
     @Test
-    fun pisaPlaceholderMatchesFourArtifactRuntimeContractButRemainsUnavailable() {
+    fun pisaPlaceholderMatchesFiveArtifactRuntimeContractButRemainsUnavailable() {
         val manifestFile = File("src/main/assets/model-manifest.json")
         assertTrue("Bundled manifest must exist", manifestFile.isFile)
 
@@ -25,6 +25,7 @@ class BundledModelManifestTest {
                 "unet_default.mnn",
                 "vae_decoder.mnn",
                 "empty_prompt.fp16",
+                "vae_segments.pack",
             ),
             pisa.artifacts.map { it.fileName },
         )

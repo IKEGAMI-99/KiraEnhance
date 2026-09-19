@@ -91,6 +91,84 @@ void testNchwToRgbaClampsAndWritesOpaqueAlpha() {
     expectByte(rgba[7], 255, "opaque alpha one");
 }
 
+void testTorchvisionQuantizationTruncatesToByteGrid() {
+    float values[] = {
+        0.0f,
+        0.5f,
+        1.0f,
+        0.501f,
+        -1.0f,
+        2.0f,
+    };
+
+    expectTrue(
+        kira::pisa::quantizeUnitPlanarLikeTorchvision(
+            values,
+            6
+        ),
+        "torchvision quantization succeeds"
+    );
+
+    expectNear(values[0], 0.0f, 0.0f, "quantized zero");
+    expectNear(
+        values[1],
+        127.0f / 255.0f,
+        1.0e-7f,
+        "half truncates to 127"
+    );
+    expectNear(values[2], 1.0f, 0.0f, "quantized one");
+    expectNear(
+        values[3],
+        127.0f / 255.0f,
+        1.0e-7f,
+        "fraction truncates"
+    );
+    expectNear(values[4], 0.0f, 0.0f, "low clamp");
+    expectNear(values[5], 1.0f, 0.0f, "high clamp");
+}
+
+void testTorchvisionUnitTensorToRgbaTruncates() {
+    const float input[] = {
+        0.0f, 1.0f,
+        0.5f, 0.501f,
+        1.5f, -0.5f,
+    };
+    std::uint8_t rgba[8] = {};
+
+    expectTrue(
+        kira::pisa::unitNchwToRgba8888LikeTorchvision(
+            input,
+            2,
+            1,
+            rgba,
+            8,
+            sizeof(rgba)
+        ),
+        "torchvision RGBA conversion succeeds"
+    );
+
+    expectByte(rgba[0], 0, "torchvision red zero");
+    expectByte(rgba[1], 127, "torchvision green half");
+    expectByte(rgba[2], 255, "torchvision blue high");
+    expectByte(rgba[3], 255, "torchvision alpha zero");
+
+    expectByte(rgba[4], 255, "torchvision red one");
+    expectByte(rgba[5], 127, "torchvision green fraction");
+    expectByte(rgba[6], 0, "torchvision blue low");
+    expectByte(rgba[7], 255, "torchvision alpha one");
+}
+
+void testTorchvisionQuantizationRejectsNonFinite() {
+    float values[] = {0.0f, std::nanf("")};
+    expectFalse(
+        kira::pisa::quantizeUnitPlanarLikeTorchvision(
+            values,
+            2
+        ),
+        "non-finite torchvision quantization rejected"
+    );
+}
+
 void testPlanarBilinearResizePreservesIdentity() {
     const float input[] = {
         0.0f, 1.0f,
@@ -214,6 +292,9 @@ void testRejectsInvalidBuffersAndDimensions() {
 int main() {
     testRgbaToNchwUsesRgbAndRespectsStride();
     testNchwToRgbaClampsAndWritesOpaqueAlpha();
+    testTorchvisionQuantizationTruncatesToByteGrid();
+    testTorchvisionUnitTensorToRgbaTruncates();
+    testTorchvisionQuantizationRejectsNonFinite();
     testPlanarBilinearResizePreservesIdentity();
     testPlanarBilinearResizeInterpolatesCornersAndCenter();
     testPlanarBilinearResizeRejectsShortOutput();

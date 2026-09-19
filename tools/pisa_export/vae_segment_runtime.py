@@ -1,0 +1,89 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Callable
+
+from vae_tile_contract import resolve_vae_module_path
+
+
+@dataclass(frozen=True)
+class SegmentRuntimeResult:
+    activation: Any
+    residual: Any | None
+
+
+def run_segment_operations(
+    vae: Any,
+    operations: list[dict[str, Any]],
+    activation: Any,
+    residual: Any | None,
+    *,
+    silu: Callable[[Any], Any],
+    attention: Callable[[Any, Any], Any],
+) -> SegmentRuntimeResult:
+    current = activation
+    live_residual = residual
+
+    for operation in operations:
+        kind = operation.get("kind")
+        module_path = operation.get("modulePath")
+        residual_key = operation.get("residualKey")
+
+        if kind == "module":
+            if not isinstance(module_path, str):
+                raise ValueError("module operation requires modulePath")
+            module = resolve_vae_module_path(vae, module_path)
+            if not callable(module):
+                raise TypeError(f"{module_path} is not callable")
+            current = module(current)
+            continue
+
+        if kind == "silu":
+            current = silu(current)
+            continue
+
+        if kind == "store_residual":
+            if live_residual is not None:
+                raise ValueError(
+                    f"residual is already live before storing {residual_key!r}"
+                )
+            shortcut = operation.get("shortcut")
+            if shortcut == "identity":
+                live_residual = current
+            elif shortcut == "module":
+                if not isinstance(module_path, str):
+                    raise ValueError(
+                        "module residual shortcut requires modulePath"
+                    )
+                module = resolve_vae_module_path(vae, module_path)
+                if not callable(module):
+                    raise TypeError(f"{module_path} is not callable")
+                live_residual = module(current)
+            else:
+                raise ValueError(
+                    f"unsupported residual shortcut {shortcut!r}"
+                )
+            continue
+
+        if kind == "add_residual":
+            if live_residual is None:
+                raise ValueError(
+                    f"cannot add residual {residual_key!r}; none is live"
+                )
+            current = current + live_residual
+            live_residual = None
+            continue
+
+        if kind == "attention":
+            if not isinstance(module_path, str):
+                raise ValueError("attention operation requires modulePath")
+            module = resolve_vae_module_path(vae, module_path)
+            current = attention(module, current)
+            continue
+
+        raise ValueError(f"unsupported VAE segment operation {kind!r}")
+
+    return SegmentRuntimeResult(
+        activation=current,
+        residual=live_residual,
+    )

@@ -9,6 +9,7 @@ import androidx.work.OneTimeWorkRequest
 import androidx.work.WorkManager
 import com.ikegami99.kiraenhance.diagnostics.AppDiagnosticLogger
 import com.ikegami99.kiraenhance.model.ModelDescriptor
+import com.ikegami99.kiraenhance.model.requireDownloadable
 import java.util.UUID
 
 class ModelDownloadManager(
@@ -22,6 +23,8 @@ class ModelDownloadManager(
         wifiOnly: Boolean,
         replaceExisting: Boolean = false,
     ): UUID {
+        validateForDownload(model)
+
         val networkType = networkTypeFor(wifiOnly)
         val constraints = Constraints.Builder()
             .setRequiredNetworkType(networkType)
@@ -50,6 +53,10 @@ class ModelDownloadManager(
     }
 
     companion object {
+        internal fun validateForDownload(model: ModelDescriptor) {
+            model.requireDownloadable()
+        }
+
         internal fun networkTypeFor(wifiOnly: Boolean): NetworkType =
             if (wifiOnly) NetworkType.UNMETERED else NetworkType.CONNECTED
 

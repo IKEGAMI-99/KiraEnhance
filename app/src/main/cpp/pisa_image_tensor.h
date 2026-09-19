@@ -1,0 +1,60 @@
+#pragma once
+
+#include <cstddef>
+#include <cstdint>
+
+namespace kira::pisa {
+
+bool rgba8888ToNormalizedNchw(
+    const std::uint8_t* input,
+    int width,
+    int height,
+    int rowStrideBytes,
+    float* output,
+    std::size_t outputFloatCount
+);
+
+bool rgba8888ToUnitNchw(
+    const std::uint8_t* input,
+    int width,
+    int height,
+    int rowStrideBytes,
+    float* output,
+    std::size_t outputFloatCount
+);
+
+bool resizePlanarBilinear(
+    const float* input,
+    int channels,
+    int inputWidth,
+    int inputHeight,
+    float* output,
+    int outputWidth,
+    int outputHeight,
+    std::size_t outputFloatCount
+);
+
+bool quantizeUnitPlanarLikeTorchvision(
+    float* values,
+    std::size_t count
+);
+
+bool unitNchwToRgba8888LikeTorchvision(
+    const float* input,
+    int width,
+    int height,
+    std::uint8_t* output,
+    int rowStrideBytes,
+    std::size_t outputByteCount
+);
+
+bool normalizedNchwToRgba8888(
+    const float* input,
+    int width,
+    int height,
+    std::uint8_t* output,
+    int rowStrideBytes,
+    std::size_t outputByteCount
+);
+
+}  // namespace kira::pisa

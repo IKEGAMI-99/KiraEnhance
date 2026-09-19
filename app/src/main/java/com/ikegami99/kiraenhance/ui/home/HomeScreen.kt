@@ -18,18 +18,45 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.ikegami99.kiraenhance.model.EnhancementMode
 
 private data class ModePreview(
     val icon: String,
     val title: String,
     val subtitle: String,
+    val mode: EnhancementMode,
+    val enabled: Boolean,
 )
 
 private val modes = listOf(
-    ModePreview("🪡", "忠実", "元画像の形や細かな模様をできるだけ維持"),
-    ModePreview("✨", "おすすめ", "忠実度とAIディテールのバランス"),
-    ModePreview("💎", "高精細", "髪や衣装の細かな質感をより鮮明に"),
-    ModePreview("🔮", "UltraSharp", "使い慣れた4x-UltraSharpをCommunity Modelとして利用"),
+    ModePreview(
+        icon = "🪡",
+        title = "忠実",
+        subtitle = "元画像の形や細かな模様をできるだけ維持",
+        mode = EnhancementMode.FIDELITY,
+        enabled = false,
+    ),
+    ModePreview(
+        icon = "✨",
+        title = "おすすめ",
+        subtitle = "PiSA-SRで忠実度とAIディテールのバランスを重視",
+        mode = EnhancementMode.BALANCED,
+        enabled = true,
+    ),
+    ModePreview(
+        icon = "💎",
+        title = "高精細",
+        subtitle = "髪や衣装の細かな質感をより鮮明に",
+        mode = EnhancementMode.DETAIL,
+        enabled = false,
+    ),
+    ModePreview(
+        icon = "🔮",
+        title = "UltraSharp",
+        subtitle = "使い慣れた4x-UltraSharpをCommunity Modelとして利用",
+        mode = EnhancementMode.ULTRASHARP,
+        enabled = true,
+    ),
 )
 
 @Composable
@@ -38,7 +65,7 @@ fun HomeScreen(
     onOpenSmokeTest: () -> Unit,
     onOpenAppUpdate: () -> Unit = {},
     onSaveLogs: () -> Unit = {},
-    onStartEnhance: () -> Unit = {},
+    onStartEnhance: (EnhancementMode) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     LazyColumn(
@@ -82,13 +109,13 @@ fun HomeScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Button(
-                        onClick = onStartEnhance,
+                        onClick = { onStartEnhance(EnhancementMode.BALANCED) },
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         Text("＋ 画像を選ぶ")
                     }
                     Text(
-                        text = "現在はUltraSharp 4xで元画像全体を処理できます",
+                        text = "おすすめはPiSA-SR、UltraSharpは検証済み4xエンジンです",
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -107,6 +134,8 @@ fun HomeScreen(
 
         items(modes) { mode ->
             Surface(
+                onClick = { onStartEnhance(mode.mode) },
+                enabled = mode.enabled,
                 shape = MaterialTheme.shapes.medium,
                 tonalElevation = if (mode.title == "おすすめ") 4.dp else 1.dp,
                 modifier = Modifier.fillMaxWidth(),
@@ -134,6 +163,13 @@ fun HomeScreen(
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
+                        if (!mode.enabled) {
+                            Text(
+                                text = "準備中",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
                 }
             }

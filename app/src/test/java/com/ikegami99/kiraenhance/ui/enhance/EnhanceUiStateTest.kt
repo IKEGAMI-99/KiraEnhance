@@ -42,8 +42,16 @@ class EnhanceUiStateTest {
     @Test
     fun `completed session can move to saved state`() {
         val completed = EnhanceUiReducer.reduce(
-            EnhanceUiState(stage = EnhanceStage.PROCESSING),
-            EnhanceEvent.ProcessingCompleted(elapsedMs = 2500),
+            EnhanceUiState(
+                stage = EnhanceStage.PROCESSING,
+                targetWidth = 516,
+                targetHeight = 512,
+            ),
+            EnhanceEvent.ProcessingCompleted(
+                elapsedMs = 2500,
+                outputWidth = 512,
+                outputHeight = 512,
+            ),
         )
         val saved = EnhanceUiReducer.reduce(
             completed,
@@ -51,6 +59,8 @@ class EnhanceUiStateTest {
         )
 
         assertEquals(EnhanceStage.SAVED, saved.stage)
+        assertEquals(512, saved.targetWidth)
+        assertEquals(512, saved.targetHeight)
         assertTrue(saved.status.contains("保存"))
         assertEquals("Pictures/KiraEnhance/result.png", saved.savedLocation)
     }

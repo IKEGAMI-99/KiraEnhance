@@ -21,7 +21,10 @@
           "sha256": "0101010101010101010101010101010101010101010101010101010101010101"
         }
       ],
-      "supportedScales": [2, 4],
+      "supportedScales": [
+        2,
+        4
+      ],
       "minAppVersion": "0.1.0-alpha01",
       "estimatedRamMb": 2048,
       "licenseName": "VERIFY-BEFORE-DISTRIBUTION",
@@ -38,13 +41,40 @@
       "backend": "MNN",
       "artifacts": [
         {
-          "fileName": "model.mnn",
-          "downloadUrl": "https://example.invalid/models/pisa-sr/model.mnn",
-          "fileSizeBytes": 2000000,
+          "fileName": "vae_encoder.mnn",
+          "downloadUrl": "https://example.invalid/models/pisa-sr/vae_encoder.mnn",
+          "fileSizeBytes": 1,
           "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+        },
+        {
+          "fileName": "unet_default.mnn",
+          "downloadUrl": "https://example.invalid/models/pisa-sr/unet_default.mnn",
+          "fileSizeBytes": 1,
+          "sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+        },
+        {
+          "fileName": "vae_decoder.mnn",
+          "downloadUrl": "https://example.invalid/models/pisa-sr/vae_decoder.mnn",
+          "fileSizeBytes": 1,
+          "sha256": "3333333333333333333333333333333333333333333333333333333333333333"
+        },
+        {
+          "fileName": "empty_prompt.fp16",
+          "downloadUrl": "https://example.invalid/models/pisa-sr/empty_prompt.fp16",
+          "fileSizeBytes": 1,
+          "sha256": "4444444444444444444444444444444444444444444444444444444444444444"
+        },
+        {
+          "fileName": "vae_segments.pack",
+          "downloadUrl": "https://example.invalid/models/pisa-sr/vae_segments.pack",
+          "fileSizeBytes": 1,
+          "sha256": "5555555555555555555555555555555555555555555555555555555555555555"
         }
       ],
-      "supportedScales": [2, 4],
+      "supportedScales": [
+        2,
+        4
+      ],
       "minAppVersion": "0.1.0-alpha01",
       "estimatedRamMb": 8000,
       "licenseName": "VERIFY-CONVERTED-WEIGHTS",
@@ -56,8 +86,8 @@
           "id": "fidelity",
           "label": "忠実度",
           "type": "SLIDER",
-          "min": 0.0,
-          "max": 1.0,
+          "min": 0,
+          "max": 1,
           "defaultValue": 0.65,
           "choices": []
         }
@@ -77,7 +107,9 @@
           "sha256": "2222222222222222222222222222222222222222222222222222222222222222"
         }
       ],
-      "supportedScales": [4],
+      "supportedScales": [
+        4
+      ],
       "minAppVersion": "0.1.0-alpha01",
       "estimatedRamMb": 4096,
       "licenseName": "VERIFY-BEFORE-DISTRIBUTION",
@@ -106,7 +138,9 @@
           "sha256": "713ce69a8642b1907cc24da7573560dcc933faf0c74e48ab0b3b379245618701"
         }
       ],
-      "supportedScales": [4],
+      "supportedScales": [
+        4
+      ],
       "minAppVersion": "0.1.0-alpha01",
       "estimatedRamMb": 2048,
       "licenseName": "CC BY-NC-SA 4.0",

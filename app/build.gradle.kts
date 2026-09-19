@@ -33,6 +33,12 @@ android {
                 providers.environmentVariable("NCNN_DIR").orNull
                     ?.takeIf { it.isNotBlank() }
                     ?.let { arguments += "-Dncnn_DIR=$it" }
+                providers.environmentVariable("MNN_INCLUDE_DIR").orNull
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let { arguments += "-DMNN_INCLUDE_DIR=$it" }
+                providers.environmentVariable("MNN_LIB_DIR").orNull
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let { arguments += "-DMNN_LIB_DIR=$it" }
             }
         }
     }

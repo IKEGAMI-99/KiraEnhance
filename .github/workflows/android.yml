@@ -15,6 +15,214 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Test PiSA export tooling
+        run: python3 -m unittest discover -s tools/pisa_export/tests -v
+
+      - name: Test PiSA latent math
+        shell: bash
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror \
+            -Iapp/src/main/cpp \
+            app/src/test/cpp/pisa_latent_math_test.cpp \
+            app/src/main/cpp/pisa_latent_math.cpp \
+            -o "$RUNNER_TEMP/pisa_latent_math_test"
+          "$RUNNER_TEMP/pisa_latent_math_test"
+
+      - name: Test PiSA Gaussian noise
+        shell: bash
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror \
+            -Iapp/src/main/cpp \
+            app/src/test/cpp/pisa_gaussian_noise_test.cpp \
+            app/src/main/cpp/pisa_gaussian_noise.cpp \
+            -o "$RUNNER_TEMP/pisa_gaussian_noise_test"
+          "$RUNNER_TEMP/pisa_gaussian_noise_test"
+
+      - name: Test PiSA image tensor conversion
+        shell: bash
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror \
+            -Iapp/src/main/cpp \
+            app/src/test/cpp/pisa_image_tensor_test.cpp \
+            app/src/main/cpp/pisa_image_tensor.cpp \
+            -o "$RUNNER_TEMP/pisa_image_tensor_test"
+          "$RUNNER_TEMP/pisa_image_tensor_test"
+
+      - name: Test PiSA Pillow resizing
+        shell: bash
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror \
+            -Iapp/src/main/cpp \
+            app/src/test/cpp/pisa_pillow_resize_test.cpp \
+            app/src/main/cpp/pisa_pillow_resize.cpp \
+            -o "$RUNNER_TEMP/pisa_pillow_resize_test"
+          "$RUNNER_TEMP/pisa_pillow_resize_test"
+
+      - name: Test PiSA resize preprocessing
+        shell: bash
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror \
+            -Iapp/src/main/cpp \
+            app/src/test/cpp/pisa_preprocess_test.cpp \
+            app/src/main/cpp/pisa_preprocess.cpp \
+            app/src/main/cpp/pisa_pillow_resize.cpp \
+            -o "$RUNNER_TEMP/pisa_preprocess_test"
+          "$RUNNER_TEMP/pisa_preprocess_test"
+
+      - name: Test PiSA resize planning
+        shell: bash
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror \
+            -Iapp/src/main/cpp \
+            app/src/test/cpp/pisa_resize_plan_test.cpp \
+            app/src/main/cpp/pisa_resize_plan.cpp \
+            -o "$RUNNER_TEMP/pisa_resize_plan_test"
+          "$RUNNER_TEMP/pisa_resize_plan_test"
+
+      - name: Test PiSA latent tile planning
+        shell: bash
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror \
+            -Iapp/src/main/cpp \
+            app/src/test/cpp/pisa_tile_plan_test.cpp \
+            app/src/main/cpp/pisa_tile_plan.cpp \
+            -o "$RUNNER_TEMP/pisa_tile_plan_test"
+          "$RUNNER_TEMP/pisa_tile_plan_test"
+
+      - name: Test PiSA VAE tile planning
+        shell: bash
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror \
+            -Iapp/src/main/cpp \
+            app/src/test/cpp/pisa_vae_tile_plan_test.cpp \
+            app/src/main/cpp/pisa_vae_tile_plan.cpp \
+            -o "$RUNNER_TEMP/pisa_vae_tile_plan_test"
+          "$RUNNER_TEMP/pisa_vae_tile_plan_test"
+
+      - name: Test PiSA VAE GroupNorm statistics
+        shell: bash
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror \
+            -Iapp/src/main/cpp \
+            app/src/test/cpp/pisa_group_norm_stats_test.cpp \
+            app/src/main/cpp/pisa_group_norm_stats.cpp \
+            -o "$RUNNER_TEMP/pisa_group_norm_stats_test"
+          "$RUNNER_TEMP/pisa_group_norm_stats_test"
+
+      - name: Test PiSA VAE tile stitching
+        shell: bash
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror \
+            -Iapp/src/main/cpp \
+            app/src/test/cpp/pisa_vae_tile_tensor_test.cpp \
+            app/src/main/cpp/pisa_vae_tile_tensor.cpp \
+            app/src/main/cpp/pisa_vae_tile_plan.cpp \
+            -o "$RUNNER_TEMP/pisa_vae_tile_tensor_test"
+          "$RUNNER_TEMP/pisa_vae_tile_tensor_test"
+
+      - name: Test PiSA VAE segment pack
+        shell: bash
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror \
+            -Iapp/src/main/cpp \
+            app/src/test/cpp/pisa_vae_segment_pack_test.cpp \
+            app/src/main/cpp/pisa_vae_segment_pack.cpp \
+            -o "$RUNNER_TEMP/pisa_vae_segment_pack_test"
+          "$RUNNER_TEMP/pisa_vae_segment_pack_test"
+
+      - name: Test PiSA tiled VAE execution
+        shell: bash
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror \
+            -Iapp/src/main/cpp \
+            app/src/test/cpp/pisa_tiled_vae_test.cpp \
+            app/src/main/cpp/pisa_tiled_vae.cpp \
+            app/src/main/cpp/pisa_vae_tile_tensor.cpp \
+            app/src/main/cpp/pisa_vae_tile_plan.cpp \
+            app/src/main/cpp/pisa_tile_tensor.cpp \
+            -o "$RUNNER_TEMP/pisa_tiled_vae_test"
+          "$RUNNER_TEMP/pisa_tiled_vae_test"
+
+      - name: Test PiSA latent tile stitching
+        shell: bash
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror \
+            -Iapp/src/main/cpp \
+            app/src/test/cpp/pisa_tile_tensor_test.cpp \
+            app/src/main/cpp/pisa_tile_tensor.cpp \
+            app/src/main/cpp/pisa_tile_plan.cpp \
+            -o "$RUNNER_TEMP/pisa_tile_tensor_test"
+          "$RUNNER_TEMP/pisa_tile_tensor_test"
+
+      - name: Test PiSA tiled planar inference
+        shell: bash
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror \
+            -Iapp/src/main/cpp \
+            app/src/test/cpp/pisa_tiled_inference_test.cpp \
+            app/src/main/cpp/pisa_tiled_inference.cpp \
+            app/src/main/cpp/pisa_tile_tensor.cpp \
+            app/src/main/cpp/pisa_tile_plan.cpp \
+            -o "$RUNNER_TEMP/pisa_tiled_inference_test"
+          "$RUNNER_TEMP/pisa_tiled_inference_test"
+
+      - name: Test PiSA AdaIN color alignment
+        shell: bash
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror \
+            -Iapp/src/main/cpp \
+            app/src/test/cpp/pisa_adain_test.cpp \
+            app/src/main/cpp/pisa_adain.cpp \
+            -o "$RUNNER_TEMP/pisa_adain_test"
+          "$RUNNER_TEMP/pisa_adain_test"
+
+      - name: Test PiSA denoise math
+        shell: bash
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror \
+            -Iapp/src/main/cpp \
+            app/src/test/cpp/pisa_denoise_math_test.cpp \
+            app/src/main/cpp/pisa_denoise_math.cpp \
+            -o "$RUNNER_TEMP/pisa_denoise_math_test"
+          "$RUNNER_TEMP/pisa_denoise_math_test"
+
+      - name: Test PiSA float16 conversion
+        shell: bash
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror \
+            -Iapp/src/main/cpp \
+            app/src/test/cpp/pisa_half_test.cpp \
+            app/src/main/cpp/pisa_half.cpp \
+            -o "$RUNNER_TEMP/pisa_half_test"
+          "$RUNNER_TEMP/pisa_half_test"
+
+      - name: Test PiSA tensor fingerprints
+        shell: bash
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror \
+            -Iapp/src/main/cpp \
+            app/src/test/cpp/pisa_tensor_fingerprint_test.cpp \
+            -o "$RUNNER_TEMP/pisa_tensor_fingerprint_test"
+          "$RUNNER_TEMP/pisa_tensor_fingerprint_test"
+
       - name: Set up JDK 17
         uses: actions/setup-java@v5
         with:
@@ -51,6 +259,41 @@ jobs:
           echo "NCNN_DIR=$NCNN_DIR" >> "$GITHUB_ENV"
           echo "Using ncnn CMake package: $NCNN_DIR"
 
+      - name: Prepare verified MNN 3.6.1 Android SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          MNN_ZIP="$RUNNER_TEMP/mnn-3.6.1-android.zip"
+          MNN_ROOT="$RUNNER_TEMP/mnn-sdk"
+          MNN_SOURCE_ROOT="$RUNNER_TEMP/mnn-source"
+          MNN_COMMIT='d407447ed56c4121a11ccbd266dc184ca1ead0c2'
+
+          curl --fail --location --retry 3 \
+            --output "$MNN_ZIP" \
+            'https://github.com/alibaba/MNN/releases/download/3.6.1/mnn_3.6.1_android_armv7_armv8_cpu_opencl_vulkan.zip'
+          echo '46dc7e86d45b8d4e957db81d2603e0b7f6c9ce9b84092ffdcee1b843cbfc9d71  '"$MNN_ZIP" | sha256sum --check --strict
+          mkdir -p "$MNN_ROOT"
+          unzip -q "$MNN_ZIP" -d "$MNN_ROOT"
+
+          MNN_PACKAGE_ROOT="$(find "$MNN_ROOT" -mindepth 1 -maxdepth 1 -type d -name 'mnn_3.6.1_android_*' -print -quit)"
+          test -n "$MNN_PACKAGE_ROOT"
+          MNN_LIB_DIR="$MNN_PACKAGE_ROOT/arm64-v8a"
+          test -f "$MNN_LIB_DIR/libMNN.so"
+
+          git init -q "$MNN_SOURCE_ROOT"
+          git -C "$MNN_SOURCE_ROOT" remote add origin 'https://github.com/alibaba/MNN.git'
+          git -C "$MNN_SOURCE_ROOT" fetch -q --depth=1 origin refs/tags/3.6.1
+          git -C "$MNN_SOURCE_ROOT" checkout -q --detach FETCH_HEAD
+          test "$(git -C "$MNN_SOURCE_ROOT" rev-parse HEAD)" = "$MNN_COMMIT"
+          MNN_INCLUDE_DIR="$MNN_SOURCE_ROOT/include"
+          test -f "$MNN_INCLUDE_DIR/MNN/Interpreter.hpp"
+          test -f "$MNN_INCLUDE_DIR/MNN/MNNDefine.h"
+
+          echo "MNN_LIB_DIR=$MNN_LIB_DIR" >> "$GITHUB_ENV"
+          echo "MNN_INCLUDE_DIR=$MNN_INCLUDE_DIR" >> "$GITHUB_ENV"
+          echo "Using MNN libraries: $MNN_LIB_DIR"
+          echo "Using MNN headers: $MNN_INCLUDE_DIR"
+
       - name: Set up Gradle 9.6
         uses: gradle/actions/setup-gradle@v4
         with:
@@ -58,6 +301,17 @@ jobs:
 
       - name: Build and test compile
         run: gradle :app:assembleDebug :app:testDebugUnitTest :app:assembleDebugAndroidTest --stacktrace
+
+      - name: Verify packaged native runtimes
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK='app/build/outputs/apk/debug/app-debug.apk'
+          test -f "$APK"
+          APK_ENTRIES="$(unzip -Z1 "$APK")"
+          grep -Fxq 'lib/arm64-v8a/libkiraenhance.so' <<< "$APK_ENTRIES"
+          grep -Fxq 'lib/arm64-v8a/libMNN.so' <<< "$APK_ENTRIES"
+          echo 'Verified libkiraenhance.so and libMNN.so in arm64-v8a APK payload'
 
       - name: Upload ncnn smoke APK
         uses: actions/upload-artifact@v4

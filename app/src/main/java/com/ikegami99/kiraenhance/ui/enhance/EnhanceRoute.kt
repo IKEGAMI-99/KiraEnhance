@@ -18,14 +18,19 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import com.ikegami99.kiraenhance.diagnostics.AppDiagnosticLogger
+import com.ikegami99.kiraenhance.diagnostics.MnnPisaDiagnosticsFormatter
 import com.ikegami99.kiraenhance.image.EnhanceOutputNamer
 import com.ikegami99.kiraenhance.image.EnhancedImageSaver
 import com.ikegami99.kiraenhance.image.SaveResult
 import com.ikegami99.kiraenhance.inference.EngineErrorCode
+import com.ikegami99.kiraenhance.inference.mnn.MnnPisaUpscaleEngine
+import com.ikegami99.kiraenhance.inference.mnn.PisaModelRequestFactory
 import com.ikegami99.kiraenhance.inference.ncnn.NcnnUpscaleEngine
+import com.ikegami99.kiraenhance.model.EnhancementMode
 import com.ikegami99.kiraenhance.model.InstalledModelStore
 import com.ikegami99.kiraenhance.model.ModelDescriptor
 import com.ikegami99.kiraenhance.model.ModelManifestParser
+import com.ikegami99.kiraenhance.model.isDownloadableProductionArtifactSet
 import java.time.Instant
 import java.time.ZoneId
 import kotlinx.coroutines.Dispatchers
@@ -34,31 +39,68 @@ import kotlinx.coroutines.withContext
 
 @Composable
 fun EnhanceRoute(
+    mode: EnhancementMode,
     onBack: () -> Unit,
     onOpenModelManager: () -> Unit,
 ) {
     val applicationContext = LocalContext.current.applicationContext
     val scope = rememberCoroutineScope()
     val logger = remember(applicationContext) { AppDiagnosticLogger.get(applicationContext) }
-    val setup = remember(applicationContext) { createEnhanceSetup(applicationContext) }
-    val processor = remember(applicationContext) {
-        EnhanceProcessor {
-            NcnnUpscaleEngine(
-                totalRamMbProvider = { totalRamMb(applicationContext) },
-            )
+    val resolver = remember(applicationContext) {
+        EnhanceEngineResolver(
+            ncnnProvider = {
+                NcnnUpscaleEngine(
+                    totalRamMbProvider = { totalRamMb(applicationContext) },
+                )
+            },
+            mnnPisaProvider = {
+                MnnPisaUpscaleEngine(
+                    onDiagnostics = { snapshot ->
+                        MnnPisaDiagnosticsFormatter.format(snapshot).forEach { line ->
+                            logger.log("PiSA", line)
+                        }
+                    },
+                    onInferenceDiagnostics = { diagnostic ->
+                        logger.log(
+                            "PiSAInfer",
+                            MnnPisaDiagnosticsFormatter.formatInference(diagnostic),
+                        )
+                    },
+                )
+            },
+            pisaRequestFactory = PisaModelRequestFactory,
+        )
+    }
+    val setup = remember(applicationContext, mode) { createEnhanceSetup(applicationContext, mode) }
+    val binding = remember(setup.model, resolver) {
+        setup.model?.let { model ->
+            runCatching { resolver.resolve(model) }.getOrNull()
         }
     }
+    val processor = remember { EnhanceProcessor() }
 
-    var state by remember(setup) {
+    var state by remember(setup, binding) {
         mutableStateOf(
             when {
                 setup.model == null -> EnhanceUiState(
                     stage = EnhanceStage.ERROR,
-                    status = setup.errorMessage ?: "UltraSharpモデル情報を読み込めません",
+                    status = setup.errorMessage ?: "選択したAIモードのモデル情報を読み込めません",
+                )
+                binding == null -> EnhanceUiState(
+                    stage = EnhanceStage.ERROR,
+                    status = "${setup.model.displayName}の推論エンジンを初期化できません。",
+                )
+                !setup.modelInstalled && !setup.downloadable -> EnhanceUiState(
+                    stage = EnhanceStage.ERROR,
+                    status = if (setup.model.mode == EnhancementMode.BALANCED) {
+                        "PiSA-SRの変換済みモデルはまだ未配布です。実モデル統合後に利用できます。"
+                    } else {
+                        "${setup.model.displayName}の配布モデルはまだ利用できません。"
+                    },
                 )
                 !setup.modelInstalled -> EnhanceUiState(
                     stage = EnhanceStage.ERROR,
-                    status = "4x-UltraSharpモデルが未インストールです。モデル管理からダウンロードしてください。",
+                    status = "${setup.model.displayName}モデルが未インストールです。モデル管理からダウンロードしてください。",
                 )
                 else -> EnhanceUiState()
             },
@@ -66,6 +108,13 @@ fun EnhanceRoute(
     }
     var sourceBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var resultBitmap by remember { mutableStateOf<Bitmap?>(null) }
+
+    LaunchedEffect(mode, setup.model, binding) {
+        logger.log(
+            "Enhance",
+            "route mode=$mode model=${setup.model?.id ?: "missing"} backend=${setup.model?.backend ?: "missing"} binding=${binding?.saveModeName ?: "missing"}",
+        )
+    }
 
     val imagePicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent(),
@@ -88,14 +137,34 @@ fun EnhanceRoute(
                 resultBitmap?.takeIf { !it.isRecycled }?.recycle()
                 sourceBitmap = bitmap
                 resultBitmap = null
-                state = EnhanceUiReducer.reduce(
-                    EnhanceUiState(),
-                    EnhanceEvent.ImageReady(bitmap.width, bitmap.height),
+                val activeBinding = binding
+                val plannedOutput = activeBinding?.plannedOutputSize(
+                    inputWidth = bitmap.width,
+                    inputHeight = bitmap.height,
                 )
-                logger.log(
-                    "Enhance",
-                    "image ready width=${bitmap.width} height=${bitmap.height} target=${bitmap.width * 4}x${bitmap.height * 4}",
-                )
+                if (activeBinding == null || plannedOutput == null) {
+                    state = EnhanceUiReducer.reduce(
+                        EnhanceUiState(),
+                        EnhanceEvent.Failed("この画像サイズでは出力寸法を計算できません。"),
+                    )
+                    logger.log(
+                        "Enhance",
+                        "image geometry rejected width=${bitmap.width} height=${bitmap.height}",
+                    )
+                } else {
+                    state = EnhanceUiReducer.reduce(
+                        EnhanceUiState(),
+                        EnhanceEvent.ImageReady(bitmap.width, bitmap.height),
+                    ).copy(
+                        targetWidth = plannedOutput.width,
+                        targetHeight = plannedOutput.height,
+                        status = "${activeBinding.saveModeName} ${activeBinding.outputScale}x の準備ができました",
+                    )
+                    logger.log(
+                        "Enhance",
+                        "image ready width=${bitmap.width} height=${bitmap.height} target=${plannedOutput.width}x${plannedOutput.height}",
+                    )
+                }
             }.onFailure { error ->
                 state = EnhanceUiReducer.reduce(
                     state,
@@ -112,72 +181,94 @@ fun EnhanceRoute(
     val startEnhance: () -> Unit = {
         val model = setup.model
         val source = sourceBitmap
-        if (model == null || !setup.modelInstalled) {
-            state = EnhanceUiReducer.reduce(
-                state,
-                EnhanceEvent.Failed("UltraSharpモデルが利用できません。モデル管理を確認してください。"),
-            )
-        } else if (source == null) {
-            state = EnhanceUiReducer.reduce(
-                state,
-                EnhanceEvent.Failed("先に画像を選択してください。"),
-            )
-        } else if (state.stage != EnhanceStage.PROCESSING) {
-            resultBitmap?.takeIf { !it.isRecycled }?.recycle()
-            resultBitmap = null
-            state = EnhanceUiReducer.reduce(state, EnhanceEvent.ProcessingStarted)
-            logger.log(
-                "Enhance",
-                "start model=${model.id} version=${model.version} input=${source.width}x${source.height} scale=4",
-            )
-            scope.launch {
-                val result = processor.run(
-                    bitmap = source,
-                    model = model,
-                    artifactPath = { fileName ->
-                        setup.store.artifactFile(
-                            modelId = model.id,
-                            version = model.version,
-                            fileName = fileName,
-                        ).absolutePath
-                    },
-                    onProgress = { progress ->
-                        state = EnhanceUiReducer.reduce(
-                            state,
-                            EnhanceEvent.Progress(
-                                completedTiles = progress.completedTiles,
-                                totalTiles = progress.totalTiles,
-                                elapsedMs = progress.elapsedMs,
-                            ),
-                        )
-                    },
+        val activeBinding = binding
+        when {
+            model == null || activeBinding == null -> {
+                state = EnhanceUiReducer.reduce(
+                    state,
+                    EnhanceEvent.Failed("選択したAIモデルを利用できません。"),
                 )
+            }
+            !setup.modelInstalled -> {
+                state = EnhanceUiReducer.reduce(
+                    state,
+                    EnhanceEvent.Failed(
+                        if (!setup.downloadable && model.mode == EnhancementMode.BALANCED) {
+                            "PiSA-SRの変換済みモデルはまだ未配布です。"
+                        } else {
+                            "${model.displayName}モデルが利用できません。モデル管理を確認してください。"
+                        },
+                    ),
+                )
+            }
+            source == null -> {
+                state = EnhanceUiReducer.reduce(
+                    state,
+                    EnhanceEvent.Failed("先に画像を選択してください。"),
+                )
+            }
+            state.stage != EnhanceStage.PROCESSING -> {
+                resultBitmap?.takeIf { !it.isRecycled }?.recycle()
+                resultBitmap = null
+                state = EnhanceUiReducer.reduce(state, EnhanceEvent.ProcessingStarted)
+                logger.log(
+                    "Enhance",
+                    "start model=${model.id} version=${model.version} mode=${model.mode} backend=${model.backend} input=${source.width}x${source.height} scale=${activeBinding.outputScale}",
+                )
+                scope.launch {
+                    val result = processor.run(
+                        bitmap = source,
+                        model = model,
+                        binding = activeBinding,
+                        artifactPath = { fileName ->
+                            setup.store.artifactFile(
+                                modelId = model.id,
+                                version = model.version,
+                                fileName = fileName,
+                            ).absolutePath
+                        },
+                        onProgress = { progress ->
+                            state = EnhanceUiReducer.reduce(
+                                state,
+                                EnhanceEvent.Progress(
+                                    completedTiles = progress.completedTiles,
+                                    totalTiles = progress.totalTiles,
+                                    elapsedMs = progress.elapsedMs,
+                                ),
+                            )
+                        },
+                    )
 
-                when (result) {
-                    is EnhanceProcessResult.Success -> {
-                        resultBitmap = result.bitmap
-                        state = EnhanceUiReducer.reduce(
-                            state,
-                            EnhanceEvent.ProcessingCompleted(result.elapsedMs),
-                        )
-                        logger.log(
-                            "Enhance",
-                            "success output=${result.bitmap.width}x${result.bitmap.height} usedGpu=${result.usedGpu} elapsedMs=${result.elapsedMs}",
-                        )
-                    }
-                    is EnhanceProcessResult.Failed -> {
-                        state = EnhanceUiReducer.reduce(
-                            state,
-                            if (result.code == EngineErrorCode.CANCELLED) {
-                                EnhanceEvent.Cancelled
-                            } else {
-                                EnhanceEvent.Failed(result.message)
-                            },
-                        )
-                        logger.log(
-                            "Enhance",
-                            "failed code=${result.code ?: "unknown"} message=${result.message}",
-                        )
+                    when (result) {
+                        is EnhanceProcessResult.Success -> {
+                            resultBitmap = result.bitmap
+                            state = EnhanceUiReducer.reduce(
+                                state,
+                                EnhanceEvent.ProcessingCompleted(
+                                    elapsedMs = result.elapsedMs,
+                                    outputWidth = result.bitmap.width,
+                                    outputHeight = result.bitmap.height,
+                                ),
+                            )
+                            logger.log(
+                                "Enhance",
+                                "success model=${model.id} output=${result.bitmap.width}x${result.bitmap.height} usedGpu=${result.usedGpu} elapsedMs=${result.elapsedMs}",
+                            )
+                        }
+                        is EnhanceProcessResult.Failed -> {
+                            state = EnhanceUiReducer.reduce(
+                                state,
+                                if (result.code == EngineErrorCode.CANCELLED) {
+                                    EnhanceEvent.Cancelled
+                                } else {
+                                    EnhanceEvent.Failed(result.message)
+                                },
+                            )
+                            logger.log(
+                                "Enhance",
+                                "failed model=${model.id} code=${result.code ?: "unknown"} message=${result.message}",
+                            )
+                        }
                     }
                 }
             }
@@ -186,13 +277,14 @@ fun EnhanceRoute(
 
     val saveEnhanced: () -> Unit = {
         val bitmap = resultBitmap
-        if (bitmap != null && !bitmap.isRecycled) {
+        val activeBinding = binding
+        if (bitmap != null && !bitmap.isRecycled && activeBinding != null) {
             scope.launch {
                 val fileName = EnhanceOutputNamer.png(
                     instant = Instant.now(),
                     zoneId = ZoneId.systemDefault(),
-                    mode = "UltraSharp",
-                    scale = 4,
+                    mode = activeBinding.saveModeName,
+                    scale = activeBinding.outputScale,
                 )
                 logger.log("EnhanceSave", "start file=$fileName size=${bitmap.width}x${bitmap.height}")
                 when (val result = EnhancedImageSaver.savePng(applicationContext, bitmap, fileName)) {
@@ -215,8 +307,8 @@ fun EnhanceRoute(
         }
     }
 
-    LaunchedEffect(setup.modelInstalled) {
-        if (setup.modelInstalled && sourceBitmap == null) {
+    LaunchedEffect(setup.modelInstalled, binding) {
+        if (setup.modelInstalled && binding != null && sourceBitmap == null) {
             imagePicker.launch("image/*")
         }
     }
@@ -258,10 +350,11 @@ private data class EnhanceSetup(
     val model: ModelDescriptor?,
     val store: InstalledModelStore,
     val modelInstalled: Boolean,
+    val downloadable: Boolean,
     val errorMessage: String? = null,
 )
 
-private fun createEnhanceSetup(context: Context): EnhanceSetup {
+private fun createEnhanceSetup(context: Context, mode: EnhancementMode): EnhanceSetup {
     val store = InstalledModelStore(context)
     val model = runCatching {
         val json = context.assets.open("model-manifest.json")
@@ -270,19 +363,21 @@ private fun createEnhanceSetup(context: Context): EnhanceSetup {
         ModelManifestParser()
             .parse(json)
             .models
-            .first { it.id == ULTRASHARP_MODEL_ID }
+            .first { it.mode == mode }
     }.getOrElse { error ->
         return EnhanceSetup(
             model = null,
             store = store,
             modelInstalled = false,
-            errorMessage = "UltraSharpモデル情報を読み込めません: ${error.message ?: "unknown error"}",
+            downloadable = false,
+            errorMessage = "選択したAIモードのモデル情報を読み込めません: ${error.message ?: "unknown error"}",
         )
     }
     return EnhanceSetup(
         model = model,
         store = store,
         modelInstalled = store.isInstalled(model),
+        downloadable = model.isDownloadableProductionArtifactSet(),
     )
 }
 
@@ -300,4 +395,3 @@ private fun totalRamMb(context: Context): Long? {
     return info.totalMem / (1024L * 1024L)
 }
 
-private const val ULTRASHARP_MODEL_ID = "ultrasharp"

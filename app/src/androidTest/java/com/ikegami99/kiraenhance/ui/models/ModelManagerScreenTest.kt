@@ -32,6 +32,8 @@ class ModelManagerScreenTest {
                     onDownload = {},
                     onDelete = {},
                     onWifiOnlyChanged = {},
+                    onImportValidation = {},
+                    onProbeValidation = {},
                     onOpenLicense = {},
                 )
             }
@@ -44,6 +46,64 @@ class ModelManagerScreenTest {
         composeRule.onNodeWithText("削除").assertIsDisplayed()
         composeRule.onAllNodesWithText("ダウンロード")[0].assertIsEnabled()
         composeRule.onNodeWithText("この端末では処理が重くなる可能性があります").assertIsDisplayed()
+    }
+
+    @Test
+    fun exposesLocalPiSAValidationImportAction() {
+        composeRule.setContent {
+            KiraEnhanceTheme {
+                ModelManagerScreen(
+                    state = ModelManagerUiState(
+                        cards = listOf(
+                            card(
+                                id = "pisa-sr",
+                                mode = EnhancementMode.BALANCED,
+                                downloadAvailable = false,
+                            ),
+                        ),
+                    ),
+                    onBack = {},
+                    onDownload = {},
+                    onDelete = {},
+                    onWifiOnlyChanged = {},
+                    onImportValidation = {},
+                    onProbeValidation = {},
+                    onOpenLicense = {},
+                )
+            }
+        }
+
+        composeRule.onNodeWithText("検証用4ファイルを選択").assertIsDisplayed()
+    }
+
+    @Test
+    fun exposesPiSADiagnosticsForImportedValidationModel() {
+        composeRule.setContent {
+            KiraEnhanceTheme {
+                ModelManagerScreen(
+                    state = ModelManagerUiState(
+                        cards = listOf(
+                            card(
+                                id = "pisa-sr",
+                                mode = EnhancementMode.BALANCED,
+                                installed = true,
+                                downloadAvailable = false,
+                            ),
+                        ),
+                    ),
+                    onBack = {},
+                    onDownload = {},
+                    onDelete = {},
+                    onWifiOnlyChanged = {},
+                    onImportValidation = {},
+                    onProbeValidation = {},
+                    onOpenLicense = {},
+                )
+            }
+        }
+
+        composeRule.onNodeWithText("PiSA診断を実行").assertIsDisplayed()
+        composeRule.onNodeWithText("検証ファイルを入替").assertIsDisplayed()
     }
 
     @Test
@@ -71,6 +131,8 @@ class ModelManagerScreenTest {
                     onDownload = {},
                     onDelete = {},
                     onWifiOnlyChanged = {},
+                    onImportValidation = {},
+                    onProbeValidation = {},
                     onOpenLicense = {},
                 )
             }
@@ -108,6 +170,7 @@ class ModelManagerScreenTest {
         installed: Boolean = false,
         community: Boolean = false,
         downloadState: ModelDownloadState = ModelDownloadState.IDLE,
+        downloadAvailable: Boolean = true,
     ): ModelCardUiState = ModelCardUiState(
         model = ModelDescriptor(
             id = id,
@@ -147,5 +210,6 @@ class ModelManagerScreenTest {
         installed = installed,
         downloadState = downloadState,
         warningMessage = "この端末では処理が重くなる可能性があります",
+        downloadAvailable = downloadAvailable,
     )
 }

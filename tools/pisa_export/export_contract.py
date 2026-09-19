@@ -12,6 +12,7 @@ ARTIFACT_NAMES = (
     "unet_default.mnn",
     "vae_decoder.mnn",
     "empty_prompt.fp16",
+    "vae_segments.pack",
 )
 
 

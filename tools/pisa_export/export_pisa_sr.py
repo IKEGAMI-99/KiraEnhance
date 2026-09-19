@@ -8,6 +8,7 @@ import sys
 from typing import Any
 
 from vae_segment_runtime import run_segment_operations
+from vae_segment_pack import write_vae_segment_pack
 
 from export_contract import (
     ARTIFACT_NAMES,
@@ -1006,6 +1007,11 @@ def run(args: argparse.Namespace) -> pathlib.Path:
 
     vae_tile_barrier_contract = build_vae_tile_barrier_contract(vae)
     vae_group_norm_affine_contract = build_vae_group_norm_affine_contract(vae)
+    vae_segment_pack_path = write_vae_segment_pack(
+        output_dir / "vae_segments.pack",
+        segment_mnn_paths=vae_segment_mnn_paths,
+        affine_contract=vae_group_norm_affine_contract,
+    )
     vae_tile_execution_contract = build_vae_tile_execution_contract(vae)
     vae_tile_segment_contract = build_vae_tile_segment_contract(
         vae_tile_execution_contract
@@ -1029,6 +1035,7 @@ def run(args: argparse.Namespace) -> pathlib.Path:
         mnn_paths[1],
         mnn_paths[2],
         export["emptyPromptPath"],
+        vae_segment_pack_path,
     ]
     if tuple(path.name for path in artifact_paths) != ARTIFACT_NAMES:
         raise RuntimeError("Internal artifact order no longer matches contract")

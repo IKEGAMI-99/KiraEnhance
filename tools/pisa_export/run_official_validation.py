@@ -48,8 +48,8 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "Optional compressed NumPy dump containing moments, validation "
-            "noise, encoded latent, UNet prediction, denoised latent, and "
-            "decoder output."
+            "noise, encoded latent, UNet prediction, denoised latent, "
+            "decoder input, and decoder output."
         ),
     )
     return parser
@@ -258,6 +258,7 @@ def run(args: argparse.Namespace) -> None:
             encoded_control=encoded_control_fp32.detach().float().cpu().numpy(),
             model_pred=model_pred.detach().float().cpu().numpy(),
             x_denoised=x_denoised.detach().float().cpu().numpy(),
+            decoder_input=decoder_input.detach().float().cpu().numpy(),
             decoder_output=decoder_output.detach().float().cpu().numpy(),
         )
 

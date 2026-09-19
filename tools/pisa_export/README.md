@@ -187,7 +187,7 @@ validation path.
 
 Use `--dump-npz /path/to/reference-stages.npz` to retain the posterior
 moments, validation noise, encoded latent, UNet prediction, denoised latent,
-and decoder output for later stage-by-stage diagnosis. The official runner
+decoder input, and decoder output for later stage-by-stage diagnosis. The official runner
 currently requires CUDA because upstream `PiSASR_eval` hardcodes CUDA.
 
 To compare those intermediate stages with the Android `PiSAInfer` line,

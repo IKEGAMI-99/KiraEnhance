@@ -26,7 +26,7 @@ class StageFingerprintsTest(unittest.TestCase):
                 ("momentsFp", "moments"),
                 ("sampledLatentFp", "encoded_control"),
                 ("modelPredFp", "model_pred"),
-                ("decoderLatentFp", "x_denoised"),
+                ("decoderLatentFp", "decoder_input"),
                 ("decodedFp", "decoder_output"),
             ),
             stage_fingerprints.STAGE_KEYS,

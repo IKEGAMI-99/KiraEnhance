@@ -15,7 +15,7 @@ STAGE_KEYS = (
     ("momentsFp", "moments"),
     ("sampledLatentFp", "encoded_control"),
     ("modelPredFp", "model_pred"),
-    ("decoderLatentFp", "x_denoised"),
+    ("decoderLatentFp", "decoder_input"),
     ("decodedFp", "decoder_output"),
 )
 

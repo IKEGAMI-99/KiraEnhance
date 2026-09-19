@@ -303,18 +303,24 @@ bool runSegmentForTile(
     ) {
         return false;
     }
-    std::vector<float> nextActivation(activationCount);
+    // The input vectors are no longer needed after runSession(). Reuse their
+    // storage for the segment outputs instead of keeping old + new tile
+    // buffers alive at the same time. This removes one avoidable per-tile
+    // allocation peak when the output fits the existing capacity.
+    state.activation.resize(activationCount);
     if (
         !readFloatNchwTensor(
             activationOutput,
-            nextActivation.data(),
-            nextActivation.size()
+            state.activation.data(),
+            state.activation.size()
         )
     ) {
         return false;
     }
+    state.activationChannels = activationChannels;
+    state.activationHeight = activationHeight;
+    state.activationWidth = activationWidth;
 
-    std::vector<float> nextResidual;
     int residualChannels = 0;
     int residualHeight = 0;
     int residualWidth = 0;
@@ -340,27 +346,27 @@ bool runSegmentForTile(
         ) {
             return false;
         }
-        nextResidual.resize(residualCount);
+        state.residual.resize(residualCount);
         if (
             !readFloatNchwTensor(
                 residualOutput,
-                nextResidual.data(),
-                nextResidual.size()
+                state.residual.data(),
+                state.residual.size()
             )
         ) {
             return false;
         }
+        state.hasResidual = true;
+    } else {
+        // Drop stale residual storage as soon as the segment consumes it.
+        // swap() is used instead of clear() so the heap allocation is
+        // released rather than merely changing the logical size.
+        std::vector<float>().swap(state.residual);
+        state.hasResidual = false;
     }
-
-    state.activation = std::move(nextActivation);
-    state.activationChannels = activationChannels;
-    state.activationHeight = activationHeight;
-    state.activationWidth = activationWidth;
-    state.residual = std::move(nextResidual);
     state.residualChannels = residualChannels;
     state.residualHeight = residualHeight;
     state.residualWidth = residualWidth;
-    state.hasResidual = residualOutput != nullptr;
     return true;
 }
 

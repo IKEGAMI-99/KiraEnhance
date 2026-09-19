@@ -1664,6 +1664,28 @@ Java_com_ikegami99_kiraenhance_inference_mnn_MnnPisaNativeBridge_nativeInfer(
         );
     }
 
+    // The VAE consumes [-1, 1], while upstream AdaIN uses
+    // ToTensor(input_image), i.e. the exact uint8 RGB / 255 grid.
+    if (
+        !kira::pisa::rgba8888ToUnitNchw(
+            modelRgba.get(),
+            resizePlan.modelWidth,
+            resizePlan.modelHeight,
+            modelRowStrideBytes,
+            sourceImage.get(),
+            imageCount
+        )
+    ) {
+        return makeInferenceResult(
+            env,
+            NativeError::INFERENCE_FAILED,
+            0,
+            0,
+            0,
+            isGpuBackend(bundle->backend)
+        );
+    }
+
     int completedStages = 0;
     const NativeError graphResult = runPisaPreparedGraph(
         *bundle,
@@ -1708,12 +1730,8 @@ Java_com_ikegami99_kiraenhance_inference_mnn_MnnPisaNativeBridge_nativeInfer(
     }
 
     for (std::size_t index = 0; index < imageCount; ++index) {
-        const float sourceValue = sourceImage[index];
         const float decodedValue = decodedImage[index];
-        if (
-            !std::isfinite(sourceValue) ||
-            !std::isfinite(decodedValue)
-        ) {
+        if (!std::isfinite(decodedValue)) {
             return makeInferenceResult(
                 env,
                 NativeError::INFERENCE_FAILED,
@@ -1724,11 +1742,6 @@ Java_com_ikegami99_kiraenhance_inference_mnn_MnnPisaNativeBridge_nativeInfer(
             );
         }
 
-        sourceImage[index] = std::clamp(
-            sourceValue * 0.5f + 0.5f,
-            0.0f,
-            1.0f
-        );
         decodedImage[index] = std::clamp(
             decodedValue * 0.5f + 0.5f,
             0.0f,

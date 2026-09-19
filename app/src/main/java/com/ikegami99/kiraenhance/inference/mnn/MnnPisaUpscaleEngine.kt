@@ -344,11 +344,17 @@ class MnnPisaUpscaleEngine(
             nativeOutputWidth = nativeResult.outputWidth,
             nativeOutputHeight = nativeResult.outputHeight,
             gpuUsed = nativeResult.gpuUsed,
+            segmentedVae = usesSegmentedVae(geometry),
         )
         runCatching {
             onInferenceDiagnostics(diagnostic)
         }
     }
+
+    private fun usesSegmentedVae(geometry: PisaResizeGeometry): Boolean =
+        geometry.modelPixels > MAX_MONOLITHIC_MODEL_PIXELS ||
+            maxOf(geometry.modelWidth, geometry.modelHeight) >
+                VAE_ENCODER_TILE_SIZE + VAE_ENCODER_PADDING * 2
 
     private fun nativeErrorMessage(error: MnnPisaNativeError): String = when (error) {
         MnnPisaNativeError.NOT_IMPLEMENTED -> "PiSA-SR MNN image path does not support this input yet"
@@ -361,5 +367,7 @@ class MnnPisaUpscaleEngine(
         const val INFERENCE_NOISE_SEED = 42L
         const val BYTES_PER_PIXEL = 4
         const val MAX_MONOLITHIC_MODEL_PIXELS = 1024L * 1024L
+        const val VAE_ENCODER_TILE_SIZE = 1024
+        const val VAE_ENCODER_PADDING = 32
     }
 }

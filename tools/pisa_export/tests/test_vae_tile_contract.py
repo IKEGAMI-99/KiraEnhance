@@ -221,6 +221,51 @@ class VaeTileContractTest(unittest.TestCase):
             residual["modulePath"],
         )
 
+    def test_resolves_and_validates_all_execution_module_paths(self):
+        model = fake_vae()
+        contract = vae_tile_contract.build_vae_tile_execution_contract(model)
+
+        resolved = vae_tile_contract.resolve_vae_module_path(
+            model,
+            "encoder.down_blocks.0.resnets.1.norm2",
+        )
+        self.assertIs(
+            model.encoder.down_blocks[0].resnets[1].norm2,
+            resolved,
+        )
+
+        resolved_count = (
+            vae_tile_contract.validate_vae_tile_execution_contract(
+                model,
+                contract,
+            )
+        )
+        self.assertGreater(resolved_count, 20)
+
+    def test_contract_validation_rejects_stale_module_path(self):
+        model = fake_vae()
+        contract = vae_tile_contract.build_vae_tile_execution_contract(model)
+        contract["encoder"]["stages"][0]["after"][1]["modulePath"] = (
+            "encoder.down_blocks.0.resnets.0.missing_conv"
+        )
+
+        with self.assertRaisesRegex(ValueError, "missing_conv"):
+            vae_tile_contract.validate_vae_tile_execution_contract(
+                model,
+                contract,
+            )
+
+    def test_contract_validation_rejects_changed_group_count(self):
+        model = fake_vae()
+        contract = vae_tile_contract.build_vae_tile_execution_contract(model)
+        model.encoder.down_blocks[0].resnets[0].norm1.num_groups = 16
+
+        with self.assertRaisesRegex(ValueError, "group count changed"):
+            vae_tile_contract.validate_vae_tile_execution_contract(
+                model,
+                contract,
+            )
+
     def test_rejects_non_32_group_contract(self):
         model = fake_vae()
         model.encoder.down_blocks[0].resnets[0].norm1.num_groups = 16

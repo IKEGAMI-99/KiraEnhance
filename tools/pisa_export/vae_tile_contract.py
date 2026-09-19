@@ -406,3 +406,87 @@ def build_vae_tile_execution_contract(vae: Any) -> dict[str, Any]:
             barriers["decoder"],
         ),
     }
+
+
+def resolve_vae_module_path(vae: Any, path: str) -> Any:
+    if not isinstance(path, str) or not path:
+        raise ValueError("module path must be a non-empty string")
+
+    current: Any = vae
+    for token in path.split("."):
+        if token.isdigit():
+            try:
+                current = current[int(token)]
+            except (IndexError, KeyError, TypeError) as error:
+                raise ValueError(
+                    f"cannot resolve index {token!r} in VAE module path {path!r}"
+                ) from error
+            continue
+
+        if not hasattr(current, token):
+            raise ValueError(
+                f"cannot resolve attribute {token!r} in VAE module path {path!r}"
+            )
+        current = getattr(current, token)
+    return current
+
+
+def validate_vae_tile_execution_contract(
+    vae: Any,
+    contract: dict[str, Any],
+) -> int:
+    if contract.get("schemaVersion") != 1:
+        raise ValueError("unsupported VAE tile execution contract schema")
+
+    resolved_paths: set[str] = set()
+    for side_name in ("encoder", "decoder"):
+        side = contract.get(side_name)
+        if not isinstance(side, dict):
+            raise ValueError(f"missing {side_name} execution contract")
+
+        operations = list(side.get("prelude", ()))
+        stages = side.get("stages")
+        if not isinstance(stages, list) or not stages:
+            raise ValueError(f"{side_name} execution contract has no stages")
+
+        for expected_index, stage in enumerate(stages):
+            if stage.get("index") != expected_index:
+                raise ValueError(
+                    f"{side_name} stage indices are not contiguous"
+                )
+            barrier = stage.get("barrier")
+            if not isinstance(barrier, dict):
+                raise ValueError(f"{side_name} stage {expected_index} has no barrier")
+
+            barrier_path = barrier.get("module_path")
+            if not isinstance(barrier_path, str):
+                raise ValueError(
+                    f"{side_name} stage {expected_index} has invalid barrier path"
+                )
+            barrier_module = resolve_vae_module_path(vae, barrier_path)
+            expected_groups = barrier.get("groups")
+            actual_groups = getattr(barrier_module, "num_groups", None)
+            if actual_groups != expected_groups:
+                raise ValueError(
+                    f"{barrier_path} group count changed: "
+                    f"contract={expected_groups} model={actual_groups}"
+                )
+            resolved_paths.add(barrier_path)
+            operations.extend(stage.get("after", ()))
+
+        for operation in operations:
+            if not isinstance(operation, dict):
+                raise ValueError(
+                    f"{side_name} execution contract contains a non-object operation"
+                )
+            module_path = operation.get("modulePath")
+            if module_path is None:
+                continue
+            if not isinstance(module_path, str):
+                raise ValueError(
+                    f"{side_name} operation contains an invalid module path"
+                )
+            resolve_vae_module_path(vae, module_path)
+            resolved_paths.add(module_path)
+
+    return len(resolved_paths)

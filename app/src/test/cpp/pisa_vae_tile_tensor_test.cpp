@@ -22,22 +22,6 @@ void expectFalse(bool value, const char* label) {
     expectTrue(!value, label);
 }
 
-void expectNear(
-    float actual,
-    float expected,
-    float tolerance,
-    const char* label
-) {
-    if (std::fabs(actual - expected) > tolerance) {
-        std::cerr
-            << "FAIL: " << label
-            << " expected=" << expected
-            << " actual=" << actual
-            << "\n";
-        ++failures;
-    }
-}
-
 void fillTile(
     std::vector<float>& values,
     int channels,

@@ -338,6 +338,64 @@ class MnnPisaUpscaleEngineTest {
     }
 
     @Test
+    fun `aligned model limit accepts odd input that exact four-x math would reject`() {
+        val native = FakeMnnPisaNativeApi(
+            inferenceResult = MnnPisaNativeInferenceResult(
+                errorCode = MnnPisaNativeError.NONE,
+                outputWidth = 1024,
+                outputHeight = 1024,
+                outputRowStrideBytes = 4096,
+                gpuUsed = false,
+            ),
+        )
+        val engine = MnnPisaUpscaleEngine(native)
+        assertTrue(engine.load(request()) is ModelLoadResult.Loaded)
+
+        val result = engine.upscale(
+            input = UpscaleInput(
+                width = 257,
+                height = 256,
+                rowStrideBytes = 1028,
+                pixelFormat = PixelFormat.RGBA_8888,
+                pixels = ByteBuffer.allocateDirect(257 * 256 * 4),
+            ),
+            settings = UpscaleSettings(outputScale = 4),
+        )
+
+        assertTrue(result is UpscaleResult.Success)
+        val success = result as UpscaleResult.Success
+        assertEquals(1024, success.output.width)
+        assertEquals(1024, success.output.height)
+        assertEquals(1, native.inferCalls)
+    }
+
+    @Test
+    fun `boosted model limit rejects extreme small aspect ratio before native inference`() {
+        val native = FakeMnnPisaNativeApi()
+        val engine = MnnPisaUpscaleEngine(native)
+        assertTrue(engine.load(request()) is ModelLoadResult.Loaded)
+
+        val result = engine.upscale(
+            input = UpscaleInput(
+                width = 64,
+                height = 1000,
+                rowStrideBytes = 256,
+                pixelFormat = PixelFormat.RGBA_8888,
+                pixels = ByteBuffer.allocateDirect(64 * 1000 * 4),
+            ),
+            settings = UpscaleSettings(outputScale = 4),
+        )
+
+        assertTrue(result is UpscaleResult.Failed)
+        assertEquals(
+            EngineErrorCode.INFERENCE_FAILED,
+            (result as UpscaleResult.Failed).error.code,
+        )
+        assertTrue(result.error.message.contains("tiled inference"))
+        assertEquals(0, native.inferCalls)
+    }
+
+    @Test
     fun `large PiSA input is rejected before native allocation path`() {
         val native = FakeMnnPisaNativeApi()
         val engine = MnnPisaUpscaleEngine(native)

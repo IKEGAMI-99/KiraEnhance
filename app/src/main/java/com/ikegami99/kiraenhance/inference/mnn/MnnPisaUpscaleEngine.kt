@@ -155,56 +155,33 @@ class MnnPisaUpscaleEngine(
             )
         }
 
-        val outputWidthLong = input.width.toLong() * settings.outputScale.toLong()
-        val outputHeightLong = input.height.toLong() * settings.outputScale.toLong()
-        if (
-            outputWidthLong <= 0L ||
-            outputHeightLong <= 0L ||
-            outputWidthLong > Int.MAX_VALUE ||
-            outputHeightLong > Int.MAX_VALUE
-        ) {
-            return failed(EngineErrorCode.OUT_OF_MEMORY, "PiSA-SR output dimensions are too large")
-        }
+        val geometry = PisaResizeGeometryPlanner.build(
+            sourceWidth = input.width,
+            sourceHeight = input.height,
+            upscale = settings.outputScale,
+        ) ?: return failed(
+            EngineErrorCode.OUT_OF_MEMORY,
+            "PiSA-SR resize geometry is invalid or too large",
+        )
 
-        if (outputWidthLong > Long.MAX_VALUE / outputHeightLong) {
-            return failed(EngineErrorCode.OUT_OF_MEMORY, "PiSA-SR output dimensions are too large")
-        }
-        val outputPixelsLong = outputWidthLong * outputHeightLong
-        if (outputPixelsLong > MAX_MONOLITHIC_OUTPUT_PIXELS) {
+        if (geometry.modelPixels > MAX_MONOLITHIC_MODEL_PIXELS) {
             return failed(
                 EngineErrorCode.INFERENCE_FAILED,
                 "PiSA-SR large-image VAE tiled inference is not implemented yet",
             )
         }
 
-        val outputWidth = outputWidthLong.toInt()
-        val outputHeight = outputHeightLong.toInt()
-        val minimumPreUpscale = PROCESS_SIZE / settings.outputScale
-        val smallInputBoosted =
-            input.width < minimumPreUpscale || input.height < minimumPreUpscale
-        val expectedNativeWidth = if (smallInputBoosted) {
-            outputWidth
-        } else {
-            outputWidth - outputWidth % MODEL_MULTIPLE
-        }
-        val expectedNativeHeight = if (smallInputBoosted) {
-            outputHeight
-        } else {
-            outputHeight - outputHeight % MODEL_MULTIPLE
-        }
-        if (expectedNativeWidth <= 0 || expectedNativeHeight <= 0) {
-            return failed(EngineErrorCode.INVALID_INPUT, "PiSA-SR aligned output dimensions are invalid")
-        }
-
-        val rowStrideLong = outputWidthLong * BYTES_PER_PIXEL
+        val expectedNativeWidth = geometry.outputWidth
+        val expectedNativeHeight = geometry.outputHeight
+        val rowStrideLong = expectedNativeWidth.toLong() * BYTES_PER_PIXEL
         if (
             rowStrideLong > Int.MAX_VALUE ||
             rowStrideLong <= 0L ||
-            outputHeightLong > Int.MAX_VALUE.toLong() / rowStrideLong
+            expectedNativeHeight.toLong() > Int.MAX_VALUE.toLong() / rowStrideLong
         ) {
             return failed(EngineErrorCode.OUT_OF_MEMORY, "PiSA-SR output buffer is too large")
         }
-        val capacityLong = rowStrideLong * outputHeightLong
+        val capacityLong = rowStrideLong * expectedNativeHeight.toLong()
 
         val outputBuffer = try {
             ByteBuffer.allocateDirect(capacityLong.toInt())
@@ -336,9 +313,7 @@ class MnnPisaUpscaleEngine(
     private companion object {
         const val MODEL_ID = "pisa-sr"
         const val NATIVE_SCALE = 4
-        const val PROCESS_SIZE = 512
-        const val MODEL_MULTIPLE = 8
         const val BYTES_PER_PIXEL = 4
-        const val MAX_MONOLITHIC_OUTPUT_PIXELS = 1024L * 1024L
+        const val MAX_MONOLITHIC_MODEL_PIXELS = 1024L * 1024L
     }
 }

@@ -15,6 +15,12 @@ namespace kira::pisa {
 
 using SegmentedVaeCancelProbe = bool (*)(void* context);
 
+struct SegmentedVaeMetrics {
+    std::size_t tileCount = 0;
+    std::size_t segmentCount = 0;
+    std::size_t peakTrackedBytes = 0;
+};
+
 bool runMnnSegmentedVae(
     const std::vector<MNN::Interpreter*>& segments,
     const std::vector<VaeGroupNormAffine>& affine,
@@ -30,7 +36,8 @@ bool runMnnSegmentedVae(
     SegmentedVaeCancelProbe cancelProbe,
     void* cancelContext,
     float* output,
-    std::size_t outputCount
+    std::size_t outputCount,
+    SegmentedVaeMetrics* metrics = nullptr
 );
 
 #endif

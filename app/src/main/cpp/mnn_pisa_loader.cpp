@@ -141,21 +141,23 @@ jlongArray makeInferenceResult(
     jint outputWidth = 0,
     jint outputHeight = 0,
     jint outputRowStrideBytes = 0,
-    bool gpuUsed = false
+    bool gpuUsed = false,
+    jlong segmentedVaePeakTrackedBytes = 0
 ) {
-    jlongArray result = env->NewLongArray(5);
+    jlongArray result = env->NewLongArray(6);
     if (result == nullptr) {
         return nullptr;
     }
 
-    const jlong values[5] = {
+    const jlong values[6] = {
         static_cast<jlong>(error),
         static_cast<jlong>(outputWidth),
         static_cast<jlong>(outputHeight),
         static_cast<jlong>(outputRowStrideBytes),
         gpuUsed ? 1L : 0L,
+        segmentedVaePeakTrackedBytes,
     };
-    env->SetLongArrayRegion(result, 0, 5, values);
+    env->SetLongArrayRegion(result, 0, 6, values);
     return result;
 }
 
@@ -466,6 +468,15 @@ private:
 
 bool isGpuBackend(MNNForwardType backend) {
     return backend == MNN_FORWARD_OPENCL || backend == MNN_FORWARD_VULKAN;
+}
+
+jlong toJlongBytes(std::size_t bytes) {
+    const auto maxValue = static_cast<std::size_t>(
+        std::numeric_limits<jlong>::max()
+    );
+    return static_cast<jlong>(
+        std::min(bytes, maxValue)
+    );
 }
 
 const char* sessionInfoForBackend(MNNForwardType backend) {
@@ -1065,9 +1076,11 @@ NativeError runPisaSegmentedGraph(
     std::uint64_t noiseSeed,
     float* decodedImage,
     std::size_t decodedImageCount,
-    int& completedStages
+    int& completedStages,
+    std::size_t& peakTrackedBytes
 ) {
     completedStages = 0;
+    peakTrackedBytes = 0;
     if (
         encoderImage == nullptr ||
         decodedImage == nullptr ||
@@ -1139,6 +1152,7 @@ NativeError runPisaSegmentedGraph(
         return NativeError::LOAD_FAILED;
     }
 
+    kira::pisa::SegmentedVaeMetrics encoderMetrics;
     if (
         !kira::pisa::runMnnSegmentedVae(
             encoderSegments,
@@ -1155,7 +1169,8 @@ NativeError runPisaSegmentedGraph(
             segmentedVaeCancelled,
             &bundle,
             moments.get(),
-            momentsCount
+            momentsCount,
+            &encoderMetrics
         )
     ) {
         return isCancellationRequested(bundle)
@@ -1163,6 +1178,7 @@ NativeError runPisaSegmentedGraph(
             : NativeError::INFERENCE_FAILED;
     }
     completedStages = 1;
+    peakTrackedBytes = encoderMetrics.peakTrackedBytes;
 
     const NativeError latentResult = runPisaLatentPipeline(
         bundle,
@@ -1178,6 +1194,7 @@ NativeError runPisaSegmentedGraph(
         return latentResult;
     }
 
+    kira::pisa::SegmentedVaeMetrics decoderMetrics;
     if (
         !kira::pisa::runMnnSegmentedVae(
             decoderSegments,
@@ -1194,7 +1211,8 @@ NativeError runPisaSegmentedGraph(
             segmentedVaeCancelled,
             &bundle,
             decodedImage,
-            decodedImageCount
+            decodedImageCount,
+            &decoderMetrics
         )
     ) {
         return isCancellationRequested(bundle)
@@ -1202,6 +1220,10 @@ NativeError runPisaSegmentedGraph(
             : NativeError::INFERENCE_FAILED;
     }
 
+    peakTrackedBytes = std::max(
+        peakTrackedBytes,
+        decoderMetrics.peakTrackedBytes
+    );
     completedStages = 3;
     return NativeError::NONE;
 }
@@ -1974,6 +1996,7 @@ Java_com_ikegami99_kiraenhance_inference_mnn_MnnPisaNativeBridge_nativeInfer(
     }
 
     int completedStages = 0;
+    std::size_t segmentedVaePeakTrackedBytes = 0;
     NativeError graphResult = NativeError::NONE;
     if (useSegmentedVae) {
         graphResult = runPisaSegmentedGraph(
@@ -1984,7 +2007,8 @@ Java_com_ikegami99_kiraenhance_inference_mnn_MnnPisaNativeBridge_nativeInfer(
             INFERENCE_NOISE_SEED,
             decodedImage.get(),
             imageCount,
-            completedStages
+            completedStages,
+            segmentedVaePeakTrackedBytes
         );
     } else {
         MNN::Tensor* encoderInput =
@@ -2250,7 +2274,8 @@ Java_com_ikegami99_kiraenhance_inference_mnn_MnnPisaNativeBridge_nativeInfer(
         resizePlan.outputWidth,
         resizePlan.outputHeight,
         outputRowStrideBytes,
-        isGpuBackend(bundle->backend)
+        isGpuBackend(bundle->backend),
+        toJlongBytes(segmentedVaePeakTrackedBytes)
     );
 #else
     (void)handle;

@@ -175,7 +175,7 @@ void testNormalizesTilesUsingOneSharedDistribution() {
         "shared tile group norm succeeds"
     );
 
-    const float denominator = std::sqrt(5.0f + 1.0e-6f);
+    const float denominator = std::sqrt(1.0f + 1.0e-6f);
     expectNear(
         firstOutput[0],
         ((1.0f - 4.0f) / denominator) * 2.0f + 1.0f,

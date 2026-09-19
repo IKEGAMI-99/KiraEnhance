@@ -65,6 +65,53 @@ void testRgbaToNchwUsesRgbAndRespectsStride() {
     expectNear(output[5], -1.0f, 1.0e-6f, "blue pixel one");
 }
 
+void testRgbaToUnitNchwMatchesTorchvisionToTensor() {
+    const std::uint8_t rgba[] = {
+        1, 127, 255, 9,
+        2, 128, 0, 8,
+    };
+    float output[6] = {};
+
+    expectTrue(
+        kira::pisa::rgba8888ToUnitNchw(
+            rgba,
+            2,
+            1,
+            8,
+            output,
+            6
+        ),
+        "RGBA to unit NCHW succeeds"
+    );
+
+    expectNear(
+        output[0],
+        1.0f / 255.0f,
+        0.0f,
+        "unit red one"
+    );
+    expectNear(
+        output[1],
+        2.0f / 255.0f,
+        0.0f,
+        "unit red two"
+    );
+    expectNear(
+        output[2],
+        127.0f / 255.0f,
+        0.0f,
+        "unit green 127"
+    );
+    expectNear(
+        output[3],
+        128.0f / 255.0f,
+        0.0f,
+        "unit green 128"
+    );
+    expectNear(output[4], 1.0f, 0.0f, "unit blue max");
+    expectNear(output[5], 0.0f, 0.0f, "unit blue zero");
+}
+
 void testNchwToRgbaClampsAndWritesOpaqueAlpha() {
     const float input[] = {
         -2.0f, 1.0f,
@@ -291,6 +338,7 @@ void testRejectsInvalidBuffersAndDimensions() {
 
 int main() {
     testRgbaToNchwUsesRgbAndRespectsStride();
+    testRgbaToUnitNchwMatchesTorchvisionToTensor();
     testNchwToRgbaClampsAndWritesOpaqueAlpha();
     testTorchvisionQuantizationTruncatesToByteGrid();
     testTorchvisionUnitTensorToRgbaTruncates();

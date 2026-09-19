@@ -131,19 +131,34 @@ fun EnhanceRoute(
                 resultBitmap?.takeIf { !it.isRecycled }?.recycle()
                 sourceBitmap = bitmap
                 resultBitmap = null
-                val outputScale = binding?.outputScale ?: DEFAULT_OUTPUT_SCALE
-                state = EnhanceUiReducer.reduce(
-                    EnhanceUiState(),
-                    EnhanceEvent.ImageReady(bitmap.width, bitmap.height),
-                ).copy(
-                    targetWidth = bitmap.width * outputScale,
-                    targetHeight = bitmap.height * outputScale,
-                    status = "${binding?.saveModeName ?: "AI"} ${outputScale}x の準備ができました",
+                val activeBinding = binding
+                val plannedOutput = activeBinding?.plannedOutputSize(
+                    inputWidth = bitmap.width,
+                    inputHeight = bitmap.height,
                 )
-                logger.log(
-                    "Enhance",
-                    "image ready width=${bitmap.width} height=${bitmap.height} target=${bitmap.width * outputScale}x${bitmap.height * outputScale}",
-                )
+                if (activeBinding == null || plannedOutput == null) {
+                    state = EnhanceUiReducer.reduce(
+                        EnhanceUiState(),
+                        EnhanceEvent.Failed("この画像サイズでは出力寸法を計算できません。"),
+                    )
+                    logger.log(
+                        "Enhance",
+                        "image geometry rejected width=${bitmap.width} height=${bitmap.height}",
+                    )
+                } else {
+                    state = EnhanceUiReducer.reduce(
+                        EnhanceUiState(),
+                        EnhanceEvent.ImageReady(bitmap.width, bitmap.height),
+                    ).copy(
+                        targetWidth = plannedOutput.width,
+                        targetHeight = plannedOutput.height,
+                        status = "${activeBinding.saveModeName} ${activeBinding.outputScale}x の準備ができました",
+                    )
+                    logger.log(
+                        "Enhance",
+                        "image ready width=${bitmap.width} height=${bitmap.height} target=${plannedOutput.width}x${plannedOutput.height}",
+                    )
+                }
             }.onFailure { error ->
                 state = EnhanceUiReducer.reduce(
                     state,

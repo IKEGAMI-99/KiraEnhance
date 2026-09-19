@@ -53,6 +53,7 @@ add_library(
     pisa_tile_tensor.cpp
     pisa_tiled_inference.cpp
     pisa_vae_tile_plan.cpp
+    pisa_vae_tile_tensor.cpp
     pisa_adain.cpp
     pisa_denoise_math.cpp
     pisa_half.cpp

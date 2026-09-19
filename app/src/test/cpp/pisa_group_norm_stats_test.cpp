@@ -66,7 +66,7 @@ void testComputesPopulationStatsLikeUpstreamVarMean() {
     expectTrue(stats.spatialPixels == 1U, "tile pixel count");
 }
 
-void testSummarizesTilesUsingUpstreamPixelWeights() {
+void testSummarizesTilesUsingTotalVariance() {
     kira::pisa::GroupNormTileStats first;
     first.batch = 1;
     first.groups = 2;
@@ -95,9 +95,9 @@ void testSummarizesTilesUsingUpstreamPixelWeights() {
     expectNear(means[0], 6.0f, 1.0e-6f, "weighted group zero mean");
     expectNear(
         variances[0],
-        11.0f / 3.0f,
+        35.0f / 3.0f,
         1.0e-6f,
-        "weighted group zero variance"
+        "combined group zero variance"
     );
     expectNear(
         means[1],
@@ -107,9 +107,9 @@ void testSummarizesTilesUsingUpstreamPixelWeights() {
     );
     expectNear(
         variances[1],
-        44.0f / 3.0f,
-        1.0e-6f,
-        "weighted group one variance"
+        524.0f / 9.0f,
+        1.0e-5f,
+        "combined group one variance"
     );
 }
 
@@ -184,7 +184,7 @@ void testRejectsInvalidContracts() {
 
 int main() {
     testComputesPopulationStatsLikeUpstreamVarMean();
-    testSummarizesTilesUsingUpstreamPixelWeights();
+    testSummarizesTilesUsingTotalVariance();
     testAppliesSharedStatsAndAffineTransform();
     testRejectsInvalidContracts();
 

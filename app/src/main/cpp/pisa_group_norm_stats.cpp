@@ -213,11 +213,13 @@ bool summarizeGroupNormTileStats(
         return false;
     }
 
-    means.assign(statCount, 0.0f);
-    variances.assign(statCount, 0.0f);
+    std::vector<double> combinedMeans(statCount, 0.0);
+    std::vector<double> combinedVariances(statCount, 0.0);
+
     for (std::size_t tileIndex = 0; tileIndex < tiles.size(); ++tileIndex) {
-        const float weight =
-            normalizedPixels[tileIndex] / sumPixels;
+        const double weight =
+            static_cast<double>(normalizedPixels[tileIndex]) /
+            static_cast<double>(sumPixels);
         const auto& tile = tiles[tileIndex];
         for (std::size_t stat = 0; stat < statCount; ++stat) {
             const float mean = tile.means[stat];
@@ -227,13 +229,44 @@ bool summarizeGroupNormTileStats(
                 !std::isfinite(variance) ||
                 variance < 0.0f
             ) {
-                means.clear();
-                variances.clear();
                 return false;
             }
-            means[stat] += mean * weight;
-            variances[stat] += variance * weight;
+            combinedMeans[stat] +=
+                static_cast<double>(mean) * weight;
         }
+    }
+
+    for (std::size_t tileIndex = 0; tileIndex < tiles.size(); ++tileIndex) {
+        const double weight =
+            static_cast<double>(normalizedPixels[tileIndex]) /
+            static_cast<double>(sumPixels);
+        const auto& tile = tiles[tileIndex];
+        for (std::size_t stat = 0; stat < statCount; ++stat) {
+            const double delta =
+                static_cast<double>(tile.means[stat]) -
+                combinedMeans[stat];
+            combinedVariances[stat] += weight * (
+                static_cast<double>(tile.variances[stat]) +
+                delta * delta
+            );
+        }
+    }
+
+    means.resize(statCount);
+    variances.resize(statCount);
+    for (std::size_t stat = 0; stat < statCount; ++stat) {
+        if (
+            !std::isfinite(combinedMeans[stat]) ||
+            !std::isfinite(combinedVariances[stat]) ||
+            combinedVariances[stat] < 0.0
+        ) {
+            means.clear();
+            variances.clear();
+            return false;
+        }
+        means[stat] = static_cast<float>(combinedMeans[stat]);
+        variances[stat] =
+            static_cast<float>(combinedVariances[stat]);
     }
 
     return true;

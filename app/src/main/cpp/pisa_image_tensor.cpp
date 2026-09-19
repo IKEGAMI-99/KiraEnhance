@@ -92,6 +92,58 @@ bool rgba8888ToNormalizedNchw(
     return true;
 }
 
+bool rgba8888ToUnitNchw(
+    const std::uint8_t* input,
+    int width,
+    int height,
+    int rowStrideBytes,
+    float* output,
+    std::size_t outputFloatCount
+) {
+    std::size_t pixels = 0;
+    if (
+        input == nullptr ||
+        output == nullptr ||
+        !imageElementCount(width, height, pixels) ||
+        width > std::numeric_limits<int>::max() / 4 ||
+        rowStrideBytes < width * 4 ||
+        outputFloatCount < pixels * 3U
+    ) {
+        return false;
+    }
+
+    float* red = output;
+    float* green = output + pixels;
+    float* blue = output + pixels * 2U;
+
+    for (int y = 0; y < height; ++y) {
+        const std::uint8_t* row =
+            input +
+            static_cast<std::size_t>(y) *
+                static_cast<std::size_t>(rowStrideBytes);
+        for (int x = 0; x < width; ++x) {
+            const std::size_t pixelIndex =
+                static_cast<std::size_t>(y) *
+                    static_cast<std::size_t>(width) +
+                static_cast<std::size_t>(x);
+            const std::size_t byteIndex =
+                static_cast<std::size_t>(x) * 4U;
+
+            red[pixelIndex] =
+                static_cast<float>(row[byteIndex]) /
+                255.0f;
+            green[pixelIndex] =
+                static_cast<float>(row[byteIndex + 1U]) /
+                255.0f;
+            blue[pixelIndex] =
+                static_cast<float>(row[byteIndex + 2U]) /
+                255.0f;
+        }
+    }
+
+    return true;
+}
+
 bool resizePlanarBilinear(
     const float* input,
     int channels,

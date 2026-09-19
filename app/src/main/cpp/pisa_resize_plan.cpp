@@ -115,6 +115,8 @@ bool buildResizePlan(
         sourceHeight,
         preWidth,
         preHeight,
+        rawModelWidth,
+        rawModelHeight,
         modelWidth,
         modelHeight,
         outputWidth,

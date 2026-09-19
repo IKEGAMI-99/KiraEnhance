@@ -25,6 +25,7 @@ data class MnnPisaNativeInferenceResult(
     val outputHeight: Int,
     val outputRowStrideBytes: Int,
     val gpuUsed: Boolean,
+    val segmentedVaePeakTrackedBytes: Long = 0L,
 )
 
 data class MnnPisaNativePrepareResult(

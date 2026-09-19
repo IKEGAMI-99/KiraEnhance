@@ -74,11 +74,12 @@ class MnnPisaDiagnosticsFormatterTest {
             nativeOutputWidth = 256,
             nativeOutputHeight = 384,
             gpuUsed = true,
+            segmentedVae = true,
         )
 
         assertEquals(
             "source=64x96 pre=128x192 rawModel=512x768 model=512x768 " +
-                "output=256x384 boosted=true seed=42 backend=opencl " +
+                "vae=segmented output=256x384 boosted=true seed=42 backend=opencl " +
                 "nativeError=none nativeOutput=256x384 gpu=true",
             MnnPisaDiagnosticsFormatter.formatInference(diagnostic),
         )

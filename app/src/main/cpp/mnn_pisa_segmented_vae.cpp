@@ -304,9 +304,12 @@ bool runSegmentForTile(
         return false;
     }
     // The input vectors are no longer needed after runSession(). Reuse their
-    // storage for the segment outputs instead of keeping old + new tile
-    // buffers alive at the same time. This removes one avoidable per-tile
-    // allocation peak when the output fits the existing capacity.
+    // storage when possible. If the output does not fit, release the consumed
+    // input allocation before growing so std::vector reallocation cannot
+    // briefly keep the old and new tile buffers alive together.
+    if (activationCount > state.activation.capacity()) {
+        std::vector<float>().swap(state.activation);
+    }
     state.activation.resize(activationCount);
     if (
         !readFloatNchwTensor(
@@ -345,6 +348,9 @@ bool runSegmentForTile(
             )
         ) {
             return false;
+        }
+        if (residualCount > state.residual.capacity()) {
+            std::vector<float>().swap(state.residual);
         }
         state.residual.resize(residualCount);
         if (

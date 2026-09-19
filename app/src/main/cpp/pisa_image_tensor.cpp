@@ -23,6 +23,22 @@ bool imageElementCount(int width, int height, std::size_t& pixels) {
     return true;
 }
 
+bool unitToTorchvisionByte(
+    float value,
+    std::uint8_t& output
+) {
+    if (!std::isfinite(value)) {
+        return false;
+    }
+
+    const float clamped =
+        std::clamp(value, 0.0f, 1.0f);
+    output = static_cast<std::uint8_t>(
+        clamped * 255.0f
+    );
+    return true;
+}
+
 std::uint8_t normalizedToByte(float value) {
     if (!std::isfinite(value)) {
         value = 0.0f;
@@ -222,6 +238,91 @@ bool resizePlanarBilinear(
                     static_cast<std::size_t>(x)
                 ] = value;
             }
+        }
+    }
+
+    return true;
+}
+
+bool quantizeUnitPlanarLikeTorchvision(
+    float* values,
+    std::size_t count
+) {
+    if (values == nullptr || count == 0) {
+        return false;
+    }
+
+    for (std::size_t index = 0; index < count; ++index) {
+        std::uint8_t byte = 0;
+        if (!unitToTorchvisionByte(values[index], byte)) {
+            return false;
+        }
+        values[index] =
+            static_cast<float>(byte) / 255.0f;
+    }
+    return true;
+}
+
+bool unitNchwToRgba8888LikeTorchvision(
+    const float* input,
+    int width,
+    int height,
+    std::uint8_t* output,
+    int rowStrideBytes,
+    std::size_t outputByteCount
+) {
+    std::size_t pixels = 0;
+    if (
+        input == nullptr ||
+        output == nullptr ||
+        !imageElementCount(width, height, pixels) ||
+        width > std::numeric_limits<int>::max() / 4 ||
+        rowStrideBytes < width * 4
+    ) {
+        return false;
+    }
+
+    const std::size_t requiredBytes =
+        static_cast<std::size_t>(rowStrideBytes) *
+        static_cast<std::size_t>(height);
+    if (outputByteCount < requiredBytes) {
+        return false;
+    }
+
+    const float* red = input;
+    const float* green = input + pixels;
+    const float* blue = input + pixels * 2U;
+
+    for (int y = 0; y < height; ++y) {
+        std::uint8_t* row =
+            output +
+            static_cast<std::size_t>(y) *
+                static_cast<std::size_t>(rowStrideBytes);
+        for (int x = 0; x < width; ++x) {
+            const std::size_t pixelIndex =
+                static_cast<std::size_t>(y) *
+                    static_cast<std::size_t>(width) +
+                static_cast<std::size_t>(x);
+            const std::size_t byteIndex =
+                static_cast<std::size_t>(x) * 4U;
+
+            if (
+                !unitToTorchvisionByte(
+                    red[pixelIndex],
+                    row[byteIndex]
+                ) ||
+                !unitToTorchvisionByte(
+                    green[pixelIndex],
+                    row[byteIndex + 1U]
+                ) ||
+                !unitToTorchvisionByte(
+                    blue[pixelIndex],
+                    row[byteIndex + 2U]
+                )
+            ) {
+                return false;
+            }
+            row[byteIndex + 3U] = 255U;
         }
     }
 

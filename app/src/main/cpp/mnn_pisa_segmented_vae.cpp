@@ -129,30 +129,6 @@ bool trackedStateBytes(
     return true;
 }
 
-bool trackedActivationBytes(
-    const std::vector<TileState>& states,
-    std::size_t& output
-) {
-    output = 0;
-    for (const TileState& state : states) {
-        std::size_t activationBytes = 0;
-        if (
-            !floatVectorBytes(
-                state.activation,
-                activationBytes
-            ) ||
-            !checkedAdd(
-                output,
-                activationBytes,
-                output
-            )
-        ) {
-            return false;
-        }
-    }
-    return true;
-}
-
 void recordPeak(
     SegmentedVaeMetrics* metrics,
     std::size_t bytes
@@ -396,48 +372,38 @@ bool normalizeStates(
         return false;
     }
 
-    std::vector<std::vector<float>> normalized(states.size());
     std::vector<GroupNormTileBuffer> buffers;
     buffers.reserve(states.size());
 
-    for (std::size_t index = 0; index < states.size(); ++index) {
-        TileState& state = states[index];
+    for (TileState& state : states) {
         if (
             state.activationChannels != affine.channels ||
             state.activation.empty()
         ) {
             return false;
         }
-        normalized[index].resize(state.activation.size());
         buffers.push_back(
             GroupNormTileBuffer{
                 state.activation.data(),
-                normalized[index].data(),
+                state.activation.data(),
                 1,
                 state.activationChannels,
                 state.activationHeight,
                 state.activationWidth,
-                normalized[index].size(),
+                state.activation.size(),
             }
         );
     }
 
-    if (
-        !normalizeGroupNormTiles(
-            buffers,
-            affine.groups,
-            affine.weight.data(),
-            affine.bias.data(),
-            affine.epsilon
-        )
-    ) {
-        return false;
-    }
-
-    for (std::size_t index = 0; index < states.size(); ++index) {
-        states[index].activation = std::move(normalized[index]);
-    }
-    return true;
+    // normalizeGroupNormTiles gathers every tile's statistics before
+    // applying the shared distribution, so the transform is safe in place.
+    return normalizeGroupNormTiles(
+        buffers,
+        affine.groups,
+        affine.weight.data(),
+        affine.bias.data(),
+        affine.epsilon
+    );
 }
 
 }  // namespace
@@ -620,23 +586,10 @@ bool runMnnSegmentedVae(
 
         if (segmentIndex < affine.size()) {
             std::size_t stateBytes = 0;
-            std::size_t activationBytes = 0;
-            std::size_t normalizationPeak = 0;
-            if (
-                !trackedStateBytes(states, stateBytes) ||
-                !trackedActivationBytes(
-                    states,
-                    activationBytes
-                ) ||
-                !checkedAdd(
-                    stateBytes,
-                    activationBytes,
-                    normalizationPeak
-                )
-            ) {
+            if (!trackedStateBytes(states, stateBytes)) {
                 return false;
             }
-            recordPeak(metrics, normalizationPeak);
+            recordPeak(metrics, stateBytes);
 
             if (
                 !normalizeStates(

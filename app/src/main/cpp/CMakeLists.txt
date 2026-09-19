@@ -54,6 +54,7 @@ add_library(
     pisa_tile_plan.cpp
     pisa_tile_tensor.cpp
     pisa_tiled_inference.cpp
+    pisa_tiled_vae.cpp
     pisa_vae_tile_plan.cpp
     pisa_vae_tile_tensor.cpp
     pisa_group_norm_stats.cpp

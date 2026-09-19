@@ -14,6 +14,15 @@ bool rgba8888ToNormalizedNchw(
     std::size_t outputFloatCount
 );
 
+bool rgba8888ToUnitNchw(
+    const std::uint8_t* input,
+    int width,
+    int height,
+    int rowStrideBytes,
+    float* output,
+    std::size_t outputFloatCount
+);
+
 bool resizePlanarBilinear(
     const float* input,
     int channels,

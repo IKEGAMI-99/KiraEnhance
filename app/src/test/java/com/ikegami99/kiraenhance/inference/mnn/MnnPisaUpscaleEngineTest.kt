@@ -429,6 +429,80 @@ class MnnPisaUpscaleEngineTest {
     }
 
     @Test
+    fun `padded encoder threshold stays on monolithic VAE path`() {
+        val native = FakeMnnPisaNativeApi(
+            inferenceResult = MnnPisaNativeInferenceResult(
+                errorCode = MnnPisaNativeError.NONE,
+                outputWidth = 1088,
+                outputHeight = 512,
+                outputRowStrideBytes = 4352,
+                gpuUsed = false,
+            ),
+        )
+        val published = mutableListOf<MnnPisaInferenceDiagnostics>()
+        val engine = MnnPisaUpscaleEngine(
+            nativeApi = native,
+            onInferenceDiagnostics = published::add,
+        )
+        assertTrue(engine.load(request()) is ModelLoadResult.Loaded)
+
+        val result = engine.upscale(
+            input = UpscaleInput(
+                width = 272,
+                height = 128,
+                rowStrideBytes = 1088,
+                pixelFormat = PixelFormat.RGBA_8888,
+                pixels = ByteBuffer.allocateDirect(272 * 128 * 4),
+            ),
+            settings = UpscaleSettings(outputScale = 4),
+        )
+
+        assertTrue(result is UpscaleResult.Success)
+        assertEquals(1, native.inferCalls)
+        assertEquals(1, published.size)
+        assertFalse(published.single().segmentedVae)
+        assertEquals(1088, published.single().modelWidth)
+        assertEquals(512, published.single().modelHeight)
+    }
+
+    @Test
+    fun `image above padded encoder threshold uses segmented VAE path`() {
+        val native = FakeMnnPisaNativeApi(
+            inferenceResult = MnnPisaNativeInferenceResult(
+                errorCode = MnnPisaNativeError.NONE,
+                outputWidth = 1120,
+                outputHeight = 512,
+                outputRowStrideBytes = 4480,
+                gpuUsed = false,
+            ),
+        )
+        val published = mutableListOf<MnnPisaInferenceDiagnostics>()
+        val engine = MnnPisaUpscaleEngine(
+            nativeApi = native,
+            onInferenceDiagnostics = published::add,
+        )
+        assertTrue(engine.load(request()) is ModelLoadResult.Loaded)
+
+        val result = engine.upscale(
+            input = UpscaleInput(
+                width = 280,
+                height = 128,
+                rowStrideBytes = 1120,
+                pixelFormat = PixelFormat.RGBA_8888,
+                pixels = ByteBuffer.allocateDirect(280 * 128 * 4),
+            ),
+            settings = UpscaleSettings(outputScale = 4),
+        )
+
+        assertTrue(result is UpscaleResult.Success)
+        assertEquals(1, native.inferCalls)
+        assertEquals(1, published.size)
+        assertTrue(published.single().segmentedVae)
+        assertEquals(1120, published.single().modelWidth)
+        assertEquals(512, published.single().modelHeight)
+    }
+
+    @Test
     fun `boosted model limit rejects extreme small aspect ratio before native inference`() {
         val native = FakeMnnPisaNativeApi()
         val engine = MnnPisaUpscaleEngine(native)

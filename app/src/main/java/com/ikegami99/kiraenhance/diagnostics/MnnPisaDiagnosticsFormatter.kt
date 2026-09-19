@@ -1,8 +1,46 @@
 package com.ikegami99.kiraenhance.diagnostics
 
 import com.ikegami99.kiraenhance.inference.mnn.MnnPisaDiagnosticsSnapshot
+import com.ikegami99.kiraenhance.inference.mnn.MnnPisaInferenceDiagnostics
 
 object MnnPisaDiagnosticsFormatter {
+    fun formatInference(diagnostic: MnnPisaInferenceDiagnostics): String = buildString {
+        append("source=")
+        append(diagnostic.sourceWidth)
+        append("x")
+        append(diagnostic.sourceHeight)
+        append(" pre=")
+        append(diagnostic.preUpscaleWidth)
+        append("x")
+        append(diagnostic.preUpscaleHeight)
+        append(" rawModel=")
+        append(diagnostic.rawModelWidth)
+        append("x")
+        append(diagnostic.rawModelHeight)
+        append(" model=")
+        append(diagnostic.modelWidth)
+        append("x")
+        append(diagnostic.modelHeight)
+        append(" output=")
+        append(diagnostic.outputWidth)
+        append("x")
+        append(diagnostic.outputHeight)
+        append(" boosted=")
+        append(diagnostic.smallInputBoosted)
+        append(" seed=")
+        append(diagnostic.noiseSeed)
+        append(" backend=")
+        append(diagnostic.backend?.name?.lowercase() ?: "unknown")
+        append(" nativeError=")
+        append(diagnostic.nativeError.name.lowercase())
+        append(" nativeOutput=")
+        append(diagnostic.nativeOutputWidth)
+        append("x")
+        append(diagnostic.nativeOutputHeight)
+        append(" gpu=")
+        append(diagnostic.gpuUsed)
+    }
+
     fun format(snapshot: MnnPisaDiagnosticsSnapshot): List<String> {
         val session = snapshot.sessionInfo
         val tensors = snapshot.tensorInfo

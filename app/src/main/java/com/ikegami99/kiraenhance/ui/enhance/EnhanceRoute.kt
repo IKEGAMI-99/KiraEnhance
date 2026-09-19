@@ -60,6 +60,12 @@ fun EnhanceRoute(
                             logger.log("PiSA", line)
                         }
                     },
+                    onInferenceDiagnostics = { diagnostic ->
+                        logger.log(
+                            "PiSAInfer",
+                            MnnPisaDiagnosticsFormatter.formatInference(diagnostic),
+                        )
+                    },
                 )
             },
             pisaRequestFactory = PisaModelRequestFactory,
@@ -389,4 +395,3 @@ private fun totalRamMb(context: Context): Long? {
     return info.totalMem / (1024L * 1024L)
 }
 
-private const val DEFAULT_OUTPUT_SCALE = 4

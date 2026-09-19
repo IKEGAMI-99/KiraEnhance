@@ -19,6 +19,11 @@ object MnnPisaNativeInferenceResultCodec {
         val segmentedVaePeakTrackedBytes =
             payload[SEGMENTED_VAE_PEAK_BYTES_INDEX].takeIf { it >= 0L }
                 ?: return internalFailure()
+        val momentsFingerprint = payload[MOMENTS_FINGERPRINT_INDEX]
+        val sampledLatentFingerprint = payload[SAMPLED_LATENT_FINGERPRINT_INDEX]
+        val modelPredictionFingerprint = payload[MODEL_PREDICTION_FINGERPRINT_INDEX]
+        val decoderLatentFingerprint = payload[DECODER_LATENT_FINGERPRINT_INDEX]
+        val decodedImageFingerprint = payload[DECODED_IMAGE_FINGERPRINT_INDEX]
 
         if (errorCode == MnnPisaNativeError.NONE) {
             if (width <= 0 || height <= 0 || rowStride < width * BYTES_PER_PIXEL) {
@@ -33,6 +38,11 @@ object MnnPisaNativeInferenceResultCodec {
             outputRowStrideBytes = rowStride,
             gpuUsed = gpuUsed,
             segmentedVaePeakTrackedBytes = segmentedVaePeakTrackedBytes,
+            momentsFingerprint = momentsFingerprint,
+            sampledLatentFingerprint = sampledLatentFingerprint,
+            modelPredictionFingerprint = modelPredictionFingerprint,
+            decoderLatentFingerprint = decoderLatentFingerprint,
+            decodedImageFingerprint = decodedImageFingerprint,
         )
     }
 
@@ -58,12 +68,17 @@ object MnnPisaNativeInferenceResultCodec {
         gpuUsed = false,
     )
 
-    private const val PAYLOAD_SIZE = 6
+    private const val PAYLOAD_SIZE = 11
     private const val ERROR_INDEX = 0
     private const val WIDTH_INDEX = 1
     private const val HEIGHT_INDEX = 2
     private const val ROW_STRIDE_INDEX = 3
     private const val GPU_INDEX = 4
     private const val SEGMENTED_VAE_PEAK_BYTES_INDEX = 5
+    private const val MOMENTS_FINGERPRINT_INDEX = 6
+    private const val SAMPLED_LATENT_FINGERPRINT_INDEX = 7
+    private const val MODEL_PREDICTION_FINGERPRINT_INDEX = 8
+    private const val DECODER_LATENT_FINGERPRINT_INDEX = 9
+    private const val DECODED_IMAGE_FINGERPRINT_INDEX = 10
     private const val BYTES_PER_PIXEL = 4
 }

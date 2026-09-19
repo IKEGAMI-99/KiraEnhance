@@ -26,6 +26,11 @@ data class MnnPisaNativeInferenceResult(
     val outputRowStrideBytes: Int,
     val gpuUsed: Boolean,
     val segmentedVaePeakTrackedBytes: Long = 0L,
+    val momentsFingerprint: Long = 0L,
+    val sampledLatentFingerprint: Long = 0L,
+    val modelPredictionFingerprint: Long = 0L,
+    val decoderLatentFingerprint: Long = 0L,
+    val decodedImageFingerprint: Long = 0L,
 )
 
 data class MnnPisaNativePrepareResult(

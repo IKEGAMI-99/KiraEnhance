@@ -12,6 +12,7 @@
 #include "pisa_resize_plan.h"
 #include "pisa_tile_plan.h"
 #include "pisa_tiled_inference.h"
+#include "pisa_tensor_fingerprint.h"
 #include "pisa_vae_segment_pack.h"
 #include "pisa_vae_tile_plan.h"
 
@@ -19,6 +20,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <fstream>
 #include <initializer_list>
 #include <limits>
@@ -69,6 +71,14 @@ enum class NativeError : jlong {
     CANCELLED = 5,
     OUT_OF_MEMORY = 6,
     INTERNAL = 7,
+};
+
+struct PisaStageFingerprints {
+    std::uint64_t moments = 0;
+    std::uint64_t sampledLatent = 0;
+    std::uint64_t modelPrediction = 0;
+    std::uint64_t decoderLatent = 0;
+    std::uint64_t decodedImage = 0;
 };
 
 jlongArray makeLoadResult(
@@ -142,22 +152,32 @@ jlongArray makeInferenceResult(
     jint outputHeight = 0,
     jint outputRowStrideBytes = 0,
     bool gpuUsed = false,
-    jlong segmentedVaePeakTrackedBytes = 0
+    jlong segmentedVaePeakTrackedBytes = 0,
+    jlong momentsFingerprint = 0,
+    jlong sampledLatentFingerprint = 0,
+    jlong modelPredictionFingerprint = 0,
+    jlong decoderLatentFingerprint = 0,
+    jlong decodedImageFingerprint = 0
 ) {
-    jlongArray result = env->NewLongArray(6);
+    jlongArray result = env->NewLongArray(11);
     if (result == nullptr) {
         return nullptr;
     }
 
-    const jlong values[6] = {
+    const jlong values[11] = {
         static_cast<jlong>(error),
         static_cast<jlong>(outputWidth),
         static_cast<jlong>(outputHeight),
         static_cast<jlong>(outputRowStrideBytes),
         gpuUsed ? 1L : 0L,
         segmentedVaePeakTrackedBytes,
+        momentsFingerprint,
+        sampledLatentFingerprint,
+        modelPredictionFingerprint,
+        decoderLatentFingerprint,
+        decodedImageFingerprint,
     };
-    env->SetLongArrayRegion(result, 0, 6, values);
+    env->SetLongArrayRegion(result, 0, 11, values);
     return result;
 }
 
@@ -477,6 +497,13 @@ jlong toJlongBytes(std::size_t bytes) {
     return static_cast<jlong>(
         std::min(bytes, maxValue)
     );
+}
+
+jlong toJlongBits(std::uint64_t value) {
+    static_assert(sizeof(jlong) == sizeof(value));
+    jlong output = 0;
+    std::memcpy(&output, &value, sizeof(output));
+    return output;
 }
 
 const char* sessionInfoForBackend(MNNForwardType backend) {
@@ -909,7 +936,8 @@ NativeError runPisaLatentPipeline(
     std::uint64_t noiseSeed,
     float* decoderLatent,
     std::size_t latentCount,
-    int& completedStages
+    int& completedStages,
+    PisaStageFingerprints* fingerprints
 ) {
     if (
         moments == nullptr ||
@@ -953,6 +981,13 @@ NativeError runPisaLatentPipeline(
         )
     ) {
         return NativeError::INFERENCE_FAILED;
+    }
+    if (fingerprints != nullptr) {
+        fingerprints->sampledLatent =
+            kira::pisa::makeTensorFingerprint(
+                decoderLatent,
+                latentCount
+            ).fnv1a64;
     }
 
     if (!writeUnetConditioning(bundle)) {
@@ -1027,6 +1062,14 @@ NativeError runPisaLatentPipeline(
         }
     }
 
+    if (fingerprints != nullptr) {
+        fingerprints->modelPrediction =
+            kira::pisa::makeTensorFingerprint(
+                modelPrediction.get(),
+                latentCount
+            ).fnv1a64;
+    }
+
     completedStages = 2;
     if (isCancellationRequested(bundle)) {
         return NativeError::CANCELLED;
@@ -1042,6 +1085,13 @@ NativeError runPisaLatentPipeline(
         )
     ) {
         return NativeError::INFERENCE_FAILED;
+    }
+    if (fingerprints != nullptr) {
+        fingerprints->decoderLatent =
+            kira::pisa::makeTensorFingerprint(
+                decoderLatent,
+                latentCount
+            ).fnv1a64;
     }
 
     return NativeError::NONE;
@@ -1077,7 +1127,8 @@ NativeError runPisaSegmentedGraph(
     float* decodedImage,
     std::size_t decodedImageCount,
     int& completedStages,
-    std::size_t& peakTrackedBytes
+    std::size_t& peakTrackedBytes,
+    PisaStageFingerprints* fingerprints
 ) {
     completedStages = 0;
     peakTrackedBytes = 0;
@@ -1179,6 +1230,13 @@ NativeError runPisaSegmentedGraph(
     }
     completedStages = 1;
     peakTrackedBytes = encoderMetrics.peakTrackedBytes;
+    if (fingerprints != nullptr) {
+        fingerprints->moments =
+            kira::pisa::makeTensorFingerprint(
+                moments.get(),
+                momentsCount
+            ).fnv1a64;
+    }
 
     const NativeError latentResult = runPisaLatentPipeline(
         bundle,
@@ -1188,7 +1246,8 @@ NativeError runPisaSegmentedGraph(
         noiseSeed,
         decoderLatent.get(),
         latentCount,
-        completedStages
+        completedStages,
+        fingerprints
     );
     if (latentResult != NativeError::NONE) {
         return latentResult;
@@ -1233,7 +1292,8 @@ NativeError runPisaPreparedGraph(
     int latentWidth,
     int latentHeight,
     std::uint64_t noiseSeed,
-    int& completedStages
+    int& completedStages,
+    PisaStageFingerprints* fingerprints = nullptr
 ) {
     completedStages = 0;
 
@@ -1298,6 +1358,13 @@ NativeError runPisaPreparedGraph(
     ) {
         return NativeError::INFERENCE_FAILED;
     }
+    if (fingerprints != nullptr) {
+        fingerprints->moments =
+            kira::pisa::makeTensorFingerprint(
+                moments.get(),
+                momentsCount
+            ).fnv1a64;
+    }
 
     const NativeError latentResult = runPisaLatentPipeline(
         bundle,
@@ -1307,7 +1374,8 @@ NativeError runPisaPreparedGraph(
         noiseSeed,
         decoderLatent.get(),
         latentCount,
-        completedStages
+        completedStages,
+        fingerprints
     );
     if (latentResult != NativeError::NONE) {
         return latentResult;
@@ -1997,6 +2065,7 @@ Java_com_ikegami99_kiraenhance_inference_mnn_MnnPisaNativeBridge_nativeInfer(
 
     int completedStages = 0;
     std::size_t segmentedVaePeakTrackedBytes = 0;
+    PisaStageFingerprints stageFingerprints;
     NativeError graphResult = NativeError::NONE;
     if (useSegmentedVae) {
         graphResult = runPisaSegmentedGraph(
@@ -2008,7 +2077,8 @@ Java_com_ikegami99_kiraenhance_inference_mnn_MnnPisaNativeBridge_nativeInfer(
             decodedImage.get(),
             imageCount,
             completedStages,
-            segmentedVaePeakTrackedBytes
+            segmentedVaePeakTrackedBytes,
+            &stageFingerprints
         );
     } else {
         MNN::Tensor* encoderInput =
@@ -2038,7 +2108,8 @@ Java_com_ikegami99_kiraenhance_inference_mnn_MnnPisaNativeBridge_nativeInfer(
             latentWidth,
             latentHeight,
             INFERENCE_NOISE_SEED,
-            completedStages
+            completedStages,
+            &stageFingerprints
         );
         if (graphResult == NativeError::NONE && completedStages == 3) {
             const MNN::Tensor* decoderOutput =
@@ -2070,6 +2141,12 @@ Java_com_ikegami99_kiraenhance_inference_mnn_MnnPisaNativeBridge_nativeInfer(
             isGpuBackend(bundle->backend)
         );
     }
+
+    stageFingerprints.decodedImage =
+        kira::pisa::makeTensorFingerprint(
+            decodedImage.get(),
+            imageCount
+        ).fnv1a64;
 
     // The VAE consumes [-1, 1], while upstream AdaIN uses
     // ToTensor(input_image), i.e. the exact uint8 RGB / 255 grid.
@@ -2275,7 +2352,12 @@ Java_com_ikegami99_kiraenhance_inference_mnn_MnnPisaNativeBridge_nativeInfer(
         resizePlan.outputHeight,
         outputRowStrideBytes,
         isGpuBackend(bundle->backend),
-        toJlongBytes(segmentedVaePeakTrackedBytes)
+        toJlongBytes(segmentedVaePeakTrackedBytes),
+        toJlongBits(stageFingerprints.moments),
+        toJlongBits(stageFingerprints.sampledLatent),
+        toJlongBits(stageFingerprints.modelPrediction),
+        toJlongBits(stageFingerprints.decoderLatent),
+        toJlongBits(stageFingerprints.decodedImage)
     );
 #else
     (void)handle;

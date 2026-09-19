@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+import math
 from typing import Any, Iterable
 
 
@@ -137,6 +138,93 @@ def _build_barriers(
             )
         )
     return result
+
+
+def _float_vector(value: Any, path: str, label: str) -> list[float]:
+    if value is None:
+        raise ValueError(f"{path} does not expose affine {label}")
+
+    current = value
+    for method_name in ("detach", "float", "cpu"):
+        method = getattr(current, method_name, None)
+        if callable(method):
+            current = method()
+    reshape = getattr(current, "reshape", None)
+    if callable(reshape):
+        current = reshape(-1)
+    tolist = getattr(current, "tolist", None)
+    if callable(tolist):
+        current = tolist()
+
+    try:
+        values = [float(item) for item in current]
+    except (TypeError, ValueError) as error:
+        raise ValueError(
+            f"{path} exposes invalid affine {label}"
+        ) from error
+
+    if not values or any(not math.isfinite(item) for item in values):
+        raise ValueError(f"{path} exposes invalid affine {label}")
+    return values
+
+
+def _group_norm_affine_record(
+    index: int,
+    path: str,
+    module: Any,
+) -> dict[str, Any]:
+    groups = _groups(module, path)
+    channels = getattr(module, "num_channels", None)
+    epsilon = getattr(module, "eps", None)
+    if (
+        not isinstance(channels, int) or
+        channels <= 0 or
+        channels % groups != 0
+    ):
+        raise ValueError(f"{path} does not expose valid channel dimensions")
+    if (
+        not isinstance(epsilon, (int, float)) or
+        not math.isfinite(float(epsilon)) or
+        float(epsilon) <= 0.0
+    ):
+        raise ValueError(f"{path} does not expose a valid epsilon")
+
+    weight = _float_vector(getattr(module, "weight", None), path, "weight")
+    bias = _float_vector(getattr(module, "bias", None), path, "bias")
+    if len(weight) != channels or len(bias) != channels:
+        raise ValueError(f"{path} affine vector length does not match channels")
+
+    return {
+        "index": index,
+        "modulePath": path,
+        "groups": groups,
+        "channels": channels,
+        "epsilon": float(epsilon),
+        "weight": weight,
+        "bias": bias,
+    }
+
+
+def build_vae_group_norm_affine_contract(vae: Any) -> dict[str, Any]:
+    encoder_entries = list(_enumerate_encoder(vae.encoder))
+    decoder_entries = list(_enumerate_decoder(vae.decoder))
+
+    encoder = [
+        _group_norm_affine_record(index, path, module)
+        for index, (path, module, _, _, _) in enumerate(encoder_entries)
+    ]
+    decoder = [
+        _group_norm_affine_record(index, path, module)
+        for index, (path, module, _, _, _) in enumerate(decoder_entries)
+    ]
+
+    return {
+        "schemaVersion": 1,
+        "encoderCount": len(encoder),
+        "decoderCount": len(decoder),
+        "encoder": encoder,
+        "decoder": decoder,
+    }
 
 
 def build_vae_tile_barrier_contract(vae: Any) -> dict[str, Any]:

@@ -13,6 +13,7 @@ from export_contract import (
     write_export_manifest,
 )
 from vae_tile_contract import (
+    build_vae_group_norm_affine_contract,
     build_vae_tile_barrier_contract,
     build_vae_tile_execution_contract,
     build_vae_tile_segment_contract,
@@ -679,6 +680,7 @@ def run(args: argparse.Namespace) -> pathlib.Path:
     )
 
     vae_tile_barrier_contract = build_vae_tile_barrier_contract(vae)
+    vae_group_norm_affine_contract = build_vae_group_norm_affine_contract(vae)
     vae_tile_execution_contract = build_vae_tile_execution_contract(vae)
     vae_tile_segment_contract = build_vae_tile_segment_contract(
         vae_tile_execution_contract
@@ -725,6 +727,7 @@ def run(args: argparse.Namespace) -> pathlib.Path:
             "pisaRepoPath": str(args.pisa_repo.resolve()),
             "pisaRepoCommit": _git_commit(args.pisa_repo),
             "vaeTileBarrierContract": vae_tile_barrier_contract,
+            "vaeGroupNormAffineContract": vae_group_norm_affine_contract,
             "vaeTileExecutionContract": vae_tile_execution_contract,
             "vaeTileSegmentContract": vae_tile_segment_contract,
             "vaeTileResolvedModuleCount": vae_tile_resolved_module_count,

@@ -8,8 +8,14 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 import vae_tile_contract
 
 
-def norm(groups=32):
-    return SimpleNamespace(num_groups=groups)
+def norm(groups=32, channels=32, epsilon=1.0e-6):
+    return SimpleNamespace(
+        num_groups=groups,
+        num_channels=channels,
+        eps=epsilon,
+        weight=[1.0 + index * 0.01 for index in range(channels)],
+        bias=[-0.5 + index * 0.02 for index in range(channels)],
+    )
 
 
 def resnet(groups=32, in_channels=4, out_channels=4):
@@ -121,6 +127,36 @@ class VaeTileContractTest(unittest.TestCase):
             decoder[-2]["module_path"],
         )
         self.assertEqual("decoder.conv_norm_out", decoder[-1]["module_path"])
+
+    def test_builds_group_norm_affine_contract(self):
+        contract = vae_tile_contract.build_vae_group_norm_affine_contract(
+            fake_vae()
+        )
+
+        self.assertEqual(1, contract["schemaVersion"])
+        self.assertEqual(12, contract["encoderCount"])
+        self.assertEqual(14, contract["decoderCount"])
+
+        first = contract["encoder"][0]
+        self.assertEqual(0, first["index"])
+        self.assertEqual(
+            "encoder.down_blocks.0.resnets.0.norm1",
+            first["modulePath"],
+        )
+        self.assertEqual(32, first["groups"])
+        self.assertEqual(32, first["channels"])
+        self.assertAlmostEqual(1.0e-6, first["epsilon"])
+        self.assertEqual(32, len(first["weight"]))
+        self.assertEqual(32, len(first["bias"]))
+        self.assertAlmostEqual(1.0, first["weight"][0])
+        self.assertAlmostEqual(-0.5, first["bias"][0])
+
+    def test_affine_contract_rejects_missing_weight(self):
+        model = fake_vae()
+        model.encoder.down_blocks[0].resnets[0].norm1.weight = None
+
+        with self.assertRaisesRegex(ValueError, "affine weight"):
+            vae_tile_contract.build_vae_group_norm_affine_contract(model)
 
     def test_builds_execution_recipe_around_group_norm_barriers(self):
         contract = vae_tile_contract.build_vae_tile_execution_contract(fake_vae())

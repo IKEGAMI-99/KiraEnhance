@@ -25,6 +25,20 @@ bool resizePlanarBilinear(
     std::size_t outputFloatCount
 );
 
+bool quantizeUnitPlanarLikeTorchvision(
+    float* values,
+    std::size_t count
+);
+
+bool unitNchwToRgba8888LikeTorchvision(
+    const float* input,
+    int width,
+    int height,
+    std::uint8_t* output,
+    int rowStrideBytes,
+    std::size_t outputByteCount
+);
+
 bool normalizedNchwToRgba8888(
     const float* input,
     int width,

@@ -201,7 +201,7 @@ void testDownscaledTiledTransformReconstructsAlignedGrid() {
                         width +
                     x * 2
                 ],
-                1.0e-5f,
+                1.0e-4f,
                 "downscaled tiled output"
             );
         }

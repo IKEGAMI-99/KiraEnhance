@@ -12,10 +12,18 @@ def norm(groups=32):
     return SimpleNamespace(num_groups=groups)
 
 
-def resnet(groups=32):
+def resnet(groups=32, in_channels=4, out_channels=4):
+    shortcut = object() if in_channels != out_channels else None
     return SimpleNamespace(
         norm1=norm(groups),
         norm2=norm(groups),
+        conv1=object(),
+        conv2=object(),
+        in_channels=in_channels,
+        out_channels=out_channels,
+        use_in_shortcut=in_channels != out_channels,
+        conv_shortcut=shortcut,
+        nin_shortcut=None,
     )
 
 
@@ -26,14 +34,19 @@ def attention(groups=32):
 def fake_vae():
     encoder = SimpleNamespace(
         down_blocks=[
-            SimpleNamespace(resnets=[resnet(), resnet()]),
+            SimpleNamespace(
+                resnets=[resnet(), resnet()],
+                downsamplers=[object()],
+            ),
             SimpleNamespace(resnets=[resnet()]),
         ],
         mid_block=SimpleNamespace(
             resnets=[resnet(), resnet()],
             attentions=[attention()],
         ),
+        conv_in=object(),
         conv_norm_out=norm(),
+        conv_out=object(),
     )
     decoder = SimpleNamespace(
         mid_block=SimpleNamespace(
@@ -41,10 +54,15 @@ def fake_vae():
             attentions=[attention()],
         ),
         up_blocks=[
-            SimpleNamespace(resnets=[resnet(), resnet(), resnet()]),
+            SimpleNamespace(
+                resnets=[resnet(), resnet(), resnet()],
+                upsamplers=[object()],
+            ),
             SimpleNamespace(resnets=[resnet()]),
         ],
+        conv_in=object(),
         conv_norm_out=norm(),
+        conv_out=object(),
     )
     return SimpleNamespace(encoder=encoder, decoder=decoder)
 
@@ -103,6 +121,105 @@ class VaeTileContractTest(unittest.TestCase):
             decoder[-2]["module_path"],
         )
         self.assertEqual("decoder.conv_norm_out", decoder[-1]["module_path"])
+
+    def test_builds_execution_recipe_around_group_norm_barriers(self):
+        contract = vae_tile_contract.build_vae_tile_execution_contract(fake_vae())
+
+        encoder = contract["encoder"]
+        self.assertEqual(
+            [
+                {
+                    "kind": "module",
+                    "modulePath": "encoder.conv_in",
+                    "residualKey": None,
+                    "shortcut": None,
+                },
+                {
+                    "kind": "store_residual",
+                    "modulePath": None,
+                    "residualKey": "encoder.down_blocks.0.resnets.0",
+                    "shortcut": "identity",
+                },
+            ],
+            encoder["prelude"],
+        )
+        self.assertEqual(12, len(encoder["stages"]))
+        self.assertEqual(
+            "encoder.down_blocks.0.resnets.0.norm1",
+            encoder["stages"][0]["barrier"]["module_path"],
+        )
+        self.assertEqual(
+            ["silu", "module"],
+            [op["kind"] for op in encoder["stages"][0]["after"]],
+        )
+        self.assertEqual(
+            "encoder.down_blocks.0.resnets.0.conv1",
+            encoder["stages"][0]["after"][1]["modulePath"],
+        )
+
+        norm2_after = encoder["stages"][1]["after"]
+        self.assertEqual(
+            ["silu", "module", "add_residual", "store_residual"],
+            [op["kind"] for op in norm2_after],
+        )
+        self.assertEqual(
+            "encoder.down_blocks.0.resnets.1",
+            norm2_after[-1]["residualKey"],
+        )
+
+        self.assertIn(
+            "encoder.down_blocks.0.downsamplers.0",
+            [
+                op["modulePath"]
+                for stage in encoder["stages"]
+                for op in stage["after"]
+                if op["kind"] == "module"
+            ],
+        )
+        self.assertEqual(
+            ["silu", "module"],
+            [op["kind"] for op in encoder["stages"][-1]["after"]],
+        )
+        self.assertEqual(
+            "encoder.conv_out",
+            encoder["stages"][-1]["after"][-1]["modulePath"],
+        )
+
+        decoder = contract["decoder"]
+        self.assertEqual(14, len(decoder["stages"]))
+        self.assertEqual(
+            "decoder.conv_in",
+            decoder["prelude"][0]["modulePath"],
+        )
+        self.assertIn(
+            "decoder.up_blocks.0.upsamplers.0",
+            [
+                op["modulePath"]
+                for stage in decoder["stages"]
+                for op in stage["after"]
+                if op["kind"] == "module"
+            ],
+        )
+        self.assertEqual(
+            "decoder.conv_out",
+            decoder["stages"][-1]["after"][-1]["modulePath"],
+        )
+
+    def test_records_channel_changing_residual_shortcut(self):
+        model = fake_vae()
+        model.encoder.down_blocks[0].resnets[0] = resnet(
+            in_channels=4,
+            out_channels=8,
+        )
+
+        contract = vae_tile_contract.build_vae_tile_execution_contract(model)
+
+        residual = contract["encoder"]["prelude"][1]
+        self.assertEqual("module", residual["shortcut"])
+        self.assertEqual(
+            "encoder.down_blocks.0.resnets.0.conv_shortcut",
+            residual["modulePath"],
+        )
 
     def test_rejects_non_32_group_contract(self):
         model = fake_vae()

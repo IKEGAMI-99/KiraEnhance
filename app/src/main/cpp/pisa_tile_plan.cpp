@@ -44,6 +44,35 @@ bool buildAxisStarts(
     return !output.empty();
 }
 
+bool scaleExactCoordinate(
+    int value,
+    int numerator,
+    int denominator,
+    int& output
+) {
+    if (
+        value < 0 ||
+        numerator <= 0 ||
+        denominator <= 0
+    ) {
+        return false;
+    }
+
+    const std::int64_t scaled =
+        static_cast<std::int64_t>(value) *
+        static_cast<std::int64_t>(numerator);
+    if (
+        scaled % denominator != 0 ||
+        scaled / denominator >
+            std::numeric_limits<int>::max()
+    ) {
+        return false;
+    }
+
+    output = static_cast<int>(scaled / denominator);
+    return true;
+}
+
 }  // namespace
 
 bool requiresTiling(
@@ -141,6 +170,70 @@ bool buildTilePlan(
     }
 
     return !output.tiles.empty();
+}
+
+bool scaleTileRegionExact(
+    const TileRegion& input,
+    int numerator,
+    int denominator,
+    int outputWidth,
+    int outputHeight,
+    TileRegion& output
+) {
+    output = TileRegion{};
+
+    if (
+        input.x < 0 ||
+        input.y < 0 ||
+        input.width <= 0 ||
+        input.height <= 0 ||
+        numerator <= 0 ||
+        denominator <= 0 ||
+        outputWidth <= 0 ||
+        outputHeight <= 0
+    ) {
+        return false;
+    }
+
+    int x = 0;
+    int y = 0;
+    int width = 0;
+    int height = 0;
+    if (
+        !scaleExactCoordinate(
+            input.x,
+            numerator,
+            denominator,
+            x
+        ) ||
+        !scaleExactCoordinate(
+            input.y,
+            numerator,
+            denominator,
+            y
+        ) ||
+        !scaleExactCoordinate(
+            input.width,
+            numerator,
+            denominator,
+            width
+        ) ||
+        !scaleExactCoordinate(
+            input.height,
+            numerator,
+            denominator,
+            height
+        ) ||
+        width <= 0 ||
+        height <= 0 ||
+        x > outputWidth - width ||
+        y > outputHeight - height
+    ) {
+        return false;
+    }
+
+    output = TileRegion{x, y, width, height};
+    return true;
 }
 
 bool buildGaussianTileWeights(

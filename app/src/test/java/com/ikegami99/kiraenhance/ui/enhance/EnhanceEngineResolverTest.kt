@@ -37,6 +37,10 @@ class EnhanceEngineResolverTest {
         assertSame(UltraSharpModelRequestFactory, binding.requestFactory)
         assertEquals(4, binding.outputScale)
         assertEquals("UltraSharp", binding.saveModeName)
+        assertEquals(
+            EnhanceOutputSize(width = 516, height = 512),
+            binding.plannedOutputSize(inputWidth = 129, inputHeight = 128),
+        )
     }
 
     @Test
@@ -49,6 +53,14 @@ class EnhanceEngineResolverTest {
         assertSame(pisaFactory, binding.requestFactory)
         assertEquals(4, binding.outputScale)
         assertEquals("PiSA-SR", binding.saveModeName)
+        assertEquals(
+            EnhanceOutputSize(width = 512, height = 512),
+            binding.plannedOutputSize(inputWidth = 129, inputHeight = 128),
+        )
+        assertEquals(
+            EnhanceOutputSize(width = 256, height = 384),
+            binding.plannedOutputSize(inputWidth = 64, inputHeight = 96),
+        )
     }
 
     @Test(expected = IllegalArgumentException::class)

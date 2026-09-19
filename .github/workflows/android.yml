@@ -213,6 +213,16 @@ jobs:
             -o "$RUNNER_TEMP/pisa_half_test"
           "$RUNNER_TEMP/pisa_half_test"
 
+      - name: Test PiSA tensor fingerprints
+        shell: bash
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror \
+            -Iapp/src/main/cpp \
+            app/src/test/cpp/pisa_tensor_fingerprint_test.cpp \
+            -o "$RUNNER_TEMP/pisa_tensor_fingerprint_test"
+          "$RUNNER_TEMP/pisa_tensor_fingerprint_test"
+
       - name: Set up JDK 17
         uses: actions/setup-java@v5
         with:

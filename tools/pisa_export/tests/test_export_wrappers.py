@@ -131,7 +131,14 @@ class ExportWrapperTest(unittest.TestCase):
         segment = {
             "requiresResidualInput": True,
             "producesResidualOutput": False,
-            "operations": [],
+            "operations": [
+                {
+                    "kind": "add_residual",
+                    "modulePath": None,
+                    "residualKey": "r0",
+                    "shortcut": None,
+                }
+            ],
         }
         wrapper = export_pisa_sr._make_vae_segment_wrapper(
             FakeTorch,
@@ -145,7 +152,7 @@ class ExportWrapperTest(unittest.TestCase):
             wrapper("activation")
 
         self.assertEqual(
-            "activation",
+            "activationresidual",
             wrapper("activation", "residual"),
         )
 

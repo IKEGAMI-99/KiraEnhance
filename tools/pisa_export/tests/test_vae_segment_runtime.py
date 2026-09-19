@@ -175,6 +175,94 @@ class VaeSegmentRuntimeTest(unittest.TestCase):
 
         self.assertEqual(63, result)
 
+    def test_runs_tiles_in_lockstep_across_group_norm_barrier(self):
+        model = SimpleNamespace(
+            encoder=SimpleNamespace(
+                conv_in=Op(lambda value: value + 1),
+                norm=Op(lambda value: value * 100),
+                conv_out=Op(lambda value: value + 3),
+            )
+        )
+        side_contract = {
+            "prelude": [
+                {
+                    "kind": "module",
+                    "modulePath": "encoder.conv_in",
+                    "residualKey": None,
+                    "shortcut": None,
+                }
+            ],
+            "stages": [
+                {
+                    "index": 0,
+                    "barrier": {
+                        "module_path": "encoder.norm",
+                    },
+                    "after": [
+                        {
+                            "kind": "silu",
+                            "modulePath": None,
+                            "residualKey": None,
+                            "shortcut": None,
+                        },
+                        {
+                            "kind": "module",
+                            "modulePath": "encoder.conv_out",
+                            "residualKey": None,
+                            "shortcut": None,
+                        },
+                    ],
+                }
+            ],
+        }
+        calls = []
+
+        def normalize_tiles(module, values):
+            calls.append((module, list(values)))
+            total = sum(values)
+            return [value + total for value in values]
+
+        result = vae_segment_runtime.run_partitioned_tiles(
+            model,
+            side_contract,
+            activations=[1, 3],
+            normalize_tiles=normalize_tiles,
+            silu=lambda value: value * 2,
+            attention=lambda module, value: module(value),
+        )
+
+        self.assertEqual([19, 23], result)
+        self.assertEqual([(model.encoder.norm, [2, 4])], calls)
+
+    def test_lockstep_runtime_rejects_normalization_tile_count_change(self):
+        model = SimpleNamespace(
+            encoder=SimpleNamespace(
+                norm=Op(lambda value: value),
+            )
+        )
+        side_contract = {
+            "prelude": [],
+            "stages": [
+                {
+                    "index": 0,
+                    "barrier": {
+                        "module_path": "encoder.norm",
+                    },
+                    "after": [],
+                }
+            ],
+        }
+
+        with self.assertRaisesRegex(ValueError, "changed tile count"):
+            vae_segment_runtime.run_partitioned_tiles(
+                model,
+                side_contract,
+                activations=[1, 2],
+                normalize_tiles=lambda module, values: values[:1],
+                silu=lambda value: value,
+                attention=lambda module, value: value,
+            )
+
     def test_rejects_invalid_residual_state_and_unknown_operation(self):
         model = fake_vae()
 

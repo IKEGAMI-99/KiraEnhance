@@ -149,3 +149,81 @@ def run_partitioned_side(
     if residual is not None:
         raise ValueError("partitioned VAE side finished with a live residual")
     return current
+
+
+def run_partitioned_tiles(
+    vae: Any,
+    side_contract: dict[str, Any],
+    activations: list[Any],
+    *,
+    normalize_tiles: Callable[[Any, list[Any]], list[Any]],
+    silu: Callable[[Any], Any],
+    attention: Callable[[Any, Any], Any],
+) -> list[Any]:
+    if not activations:
+        return []
+
+    prelude = side_contract.get("prelude")
+    stages = side_contract.get("stages")
+    if not isinstance(prelude, list) or not isinstance(stages, list):
+        raise ValueError("partitioned VAE side contract is incomplete")
+
+    states = [
+        run_segment_operations(
+            vae,
+            prelude,
+            activation,
+            None,
+            silu=silu,
+            attention=attention,
+        )
+        for activation in activations
+    ]
+
+    for expected_index, stage in enumerate(stages):
+        if stage.get("index") != expected_index:
+            raise ValueError("partitioned VAE stage indices are not contiguous")
+        barrier = stage.get("barrier")
+        if not isinstance(barrier, dict):
+            raise ValueError(
+                f"partitioned VAE stage {expected_index} has no barrier"
+            )
+        barrier_path = barrier.get("module_path")
+        if not isinstance(barrier_path, str):
+            raise ValueError(
+                f"partitioned VAE stage {expected_index} has invalid barrier path"
+            )
+        barrier_module = resolve_vae_module_path(vae, barrier_path)
+
+        normalized = list(
+            normalize_tiles(
+                barrier_module,
+                [state.activation for state in states],
+            )
+        )
+        if len(normalized) != len(states):
+            raise ValueError(
+                f"partitioned VAE stage {expected_index} normalization "
+                "changed tile count"
+            )
+
+        after = stage.get("after")
+        if not isinstance(after, list):
+            raise ValueError(
+                f"partitioned VAE stage {expected_index} has no operations"
+            )
+        states = [
+            run_segment_operations(
+                vae,
+                after,
+                normalized_activation,
+                state.residual,
+                silu=silu,
+                attention=attention,
+            )
+            for state, normalized_activation in zip(states, normalized)
+        ]
+
+    if any(state.residual is not None for state in states):
+        raise ValueError("partitioned VAE side finished with a live residual")
+    return [state.activation for state in states]

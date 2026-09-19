@@ -130,6 +130,20 @@ jobs:
             -o "$RUNNER_TEMP/pisa_vae_tile_tensor_test"
           "$RUNNER_TEMP/pisa_vae_tile_tensor_test"
 
+      - name: Test PiSA tiled VAE execution
+        shell: bash
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror \
+            -Iapp/src/main/cpp \
+            app/src/test/cpp/pisa_tiled_vae_test.cpp \
+            app/src/main/cpp/pisa_tiled_vae.cpp \
+            app/src/main/cpp/pisa_vae_tile_tensor.cpp \
+            app/src/main/cpp/pisa_vae_tile_plan.cpp \
+            app/src/main/cpp/pisa_tile_tensor.cpp \
+            -o "$RUNNER_TEMP/pisa_tiled_vae_test"
+          "$RUNNER_TEMP/pisa_tiled_vae_test"
+
       - name: Test PiSA latent tile stitching
         shell: bash
         run: |

@@ -190,6 +190,19 @@ moments, validation noise, encoded latent, UNet prediction, denoised latent,
 and decoder output for later stage-by-stage diagnosis. The official runner
 currently requires CUDA because upstream `PiSASR_eval` hardcodes CUDA.
 
+To compare those intermediate stages with the Android `PiSAInfer` line,
+generate the same canonical float32 FNV-1a fingerprints:
+
+```bash
+python tools/pisa_export/stage_fingerprints.py \
+  /path/to/reference-stages.npz
+```
+
+The command prints `momentsFp`, `sampledLatentFp`, `modelPredFp`,
+`decoderLatentFp`, and `decodedFp` in the same fixed-width hexadecimal
+format as Android. The first differing field identifies the earliest observed
+stage divergence without dumping multi-megabyte tensors from the phone.
+
 ## Compare official and Android output
 
 After exporting the same source image from the official PiSA-SR pipeline and

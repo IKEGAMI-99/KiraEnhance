@@ -75,12 +75,14 @@ class MnnPisaDiagnosticsFormatterTest {
             nativeOutputHeight = 384,
             gpuUsed = true,
             segmentedVae = true,
+            nativePeakTrackedBytes = 134_217_728L,
         )
 
         assertEquals(
             "source=64x96 pre=128x192 rawModel=512x768 model=512x768 " +
                 "vae=segmented output=256x384 boosted=true seed=42 backend=opencl " +
-                "nativeError=none nativeOutput=256x384 gpu=true",
+                "nativeError=none nativeOutput=256x384 gpu=true " +
+                "vaePeakBytes=134217728",
             MnnPisaDiagnosticsFormatter.formatInference(diagnostic),
         )
     }

@@ -894,12 +894,36 @@ def _git_commit(path: pathlib.Path) -> str:
     return value or "unknown"
 
 
+def _convert_onnx_to_mnn(
+    binary: str,
+    onnx_path: pathlib.Path,
+    mnn_path: pathlib.Path,
+) -> pathlib.Path:
+    mnn_path.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        build_mnnconvert_command(
+            binary,
+            str(onnx_path.resolve()),
+            str(mnn_path.resolve()),
+        ),
+        check=True,
+    )
+    if not mnn_path.is_file() or mnn_path.stat().st_size <= 0:
+        raise RuntimeError(f"MNNConvert did not produce {mnn_path}")
+    return mnn_path
+
+
 def convert_to_mnn(
     *,
     mnnconvert: pathlib.Path,
     output_dir: pathlib.Path,
     onnx_paths: dict[str, pathlib.Path],
-) -> tuple[str, list[pathlib.Path]]:
+    segment_onnx_paths: dict[str, list[pathlib.Path]] | None = None,
+) -> tuple[
+    str,
+    list[pathlib.Path],
+    dict[str, list[pathlib.Path]],
+]:
     binary = str(mnnconvert.resolve())
     version = _command_output([binary, "--version"])
 
@@ -909,21 +933,35 @@ def convert_to_mnn(
         (onnx_paths["vaeDecoder"], output_dir / "vae_decoder.mnn"),
     )
 
-    mnn_paths = []
-    for onnx_path, mnn_path in conversion_pairs:
-        subprocess.run(
-            build_mnnconvert_command(
-                binary,
-                str(onnx_path.resolve()),
-                str(mnn_path.resolve()),
-            ),
-            check=True,
+    mnn_paths = [
+        _convert_onnx_to_mnn(
+            binary,
+            onnx_path,
+            mnn_path,
         )
-        if not mnn_path.is_file() or mnn_path.stat().st_size <= 0:
-            raise RuntimeError(f"MNNConvert did not produce {mnn_path}")
-        mnn_paths.append(mnn_path)
+        for onnx_path, mnn_path in conversion_pairs
+    ]
 
-    return version, mnn_paths
+    segment_mnn_paths: dict[str, list[pathlib.Path]] = {
+        "encoder": [],
+        "decoder": [],
+    }
+    for side_name in ("encoder", "decoder"):
+        for onnx_path in (segment_onnx_paths or {}).get(side_name, ()):
+            mnn_path = (
+                output_dir /
+                "vae_segments" /
+                f"{onnx_path.stem}.mnn"
+            )
+            segment_mnn_paths[side_name].append(
+                _convert_onnx_to_mnn(
+                    binary,
+                    onnx_path,
+                    mnn_path,
+                )
+            )
+
+    return version, mnn_paths, segment_mnn_paths
 
 
 def run(args: argparse.Namespace) -> pathlib.Path:
@@ -955,10 +993,15 @@ def run(args: argparse.Namespace) -> pathlib.Path:
         export_precision=export_precision,
     )
 
-    mnnconvert_version, mnn_paths = convert_to_mnn(
+    (
+        mnnconvert_version,
+        mnn_paths,
+        vae_segment_mnn_paths,
+    ) = convert_to_mnn(
         mnnconvert=args.mnnconvert,
         output_dir=output_dir,
         onnx_paths=export["onnxPaths"],
+        segment_onnx_paths=export["vaeSegmentOnnxPaths"],
     )
 
     vae_tile_barrier_contract = build_vae_tile_barrier_contract(vae)
@@ -1012,6 +1055,13 @@ def run(args: argparse.Namespace) -> pathlib.Path:
             "vaeGroupNormAffineContract": vae_group_norm_affine_contract,
             "vaeTileExecutionContract": vae_tile_execution_contract,
             "vaeTileSegmentContract": vae_tile_segment_contract,
+            "vaeSegmentMnnFiles": {
+                side_name: [
+                    str(path.relative_to(output_dir))
+                    for path in paths
+                ]
+                for side_name, paths in vae_segment_mnn_paths.items()
+            },
             "vaeTileResolvedModuleCount": vae_tile_resolved_module_count,
         },
         artifact_paths=artifact_paths,

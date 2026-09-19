@@ -550,12 +550,13 @@ bool runMnnSegmentedVae(
             )
         ) {
             return false;
-            std::size_t trackedBytes = 0;
+        }
+
+        std::size_t trackedBytes = 0;
         if (!trackedStateBytes(states, trackedBytes)) {
             return false;
         }
         recordPeak(metrics, trackedBytes);
-    }
     }
 
     for (

@@ -133,6 +133,107 @@ void testDecoderPlanMatchesOfficialDefaults() {
     expectEqual(last.output.width, 936, "decoder last output width");
 }
 
+void testComputesEncoderLocalCrops() {
+    kira::pisa::VaeTilePlan plan;
+    expectTrue(
+        kira::pisa::buildVaeTilePlan(
+            2048,
+            1536,
+            1024,
+            32,
+            false,
+            plan
+        ),
+        "encoder crop plan succeeds"
+    );
+
+    kira::pisa::TileRegion firstCrop;
+    expectTrue(
+        kira::pisa::localOutputCropForVaeTile(
+            plan.tiles.front(),
+            false,
+            firstCrop
+        ),
+        "encoder first local crop succeeds"
+    );
+    expectEqual(firstCrop.x, 0, "encoder first local crop x");
+    expectEqual(firstCrop.y, 0, "encoder first local crop y");
+    expectEqual(firstCrop.width, 128, "encoder first crop width");
+    expectEqual(firstCrop.height, 96, "encoder first crop height");
+
+    kira::pisa::TileRegion lastCrop;
+    expectTrue(
+        kira::pisa::localOutputCropForVaeTile(
+            plan.tiles.back(),
+            false,
+            lastCrop
+        ),
+        "encoder last local crop succeeds"
+    );
+    expectEqual(lastCrop.x, 4, "encoder last local crop x");
+    expectEqual(lastCrop.y, 4, "encoder last local crop y");
+    expectEqual(lastCrop.width, 128, "encoder last crop width");
+    expectEqual(lastCrop.height, 96, "encoder last crop height");
+}
+
+void testComputesDecoderLocalCrops() {
+    kira::pisa::VaeTilePlan plan;
+    expectTrue(
+        kira::pisa::buildVaeTilePlan(
+            256,
+            192,
+            224,
+            11,
+            true,
+            plan
+        ),
+        "decoder crop plan succeeds"
+    );
+
+    kira::pisa::TileRegion firstCrop;
+    expectTrue(
+        kira::pisa::localOutputCropForVaeTile(
+            plan.tiles.front(),
+            true,
+            firstCrop
+        ),
+        "decoder first local crop succeeds"
+    );
+    expectEqual(firstCrop.x, 0, "decoder first local crop x");
+    expectEqual(firstCrop.y, 0, "decoder first local crop y");
+    expectEqual(firstCrop.width, 1112, "decoder first crop width");
+    expectEqual(firstCrop.height, 1536, "decoder first crop height");
+
+    kira::pisa::TileRegion lastCrop;
+    expectTrue(
+        kira::pisa::localOutputCropForVaeTile(
+            plan.tiles.back(),
+            true,
+            lastCrop
+        ),
+        "decoder last local crop succeeds"
+    );
+    expectEqual(lastCrop.x, 88, "decoder last local crop x");
+    expectEqual(lastCrop.y, 0, "decoder last local crop y");
+    expectEqual(lastCrop.width, 936, "decoder last crop width");
+    expectEqual(lastCrop.height, 1536, "decoder last crop height");
+}
+
+void testRejectsInvalidLocalCrop() {
+    kira::pisa::TileRegion output;
+    expectFalse(
+        kira::pisa::localOutputCropForVaeTile(
+            kira::pisa::VaeTileRegion{
+                kira::pisa::TileRegion{100, 0, 64, 64},
+                kira::pisa::TileRegion{0, 0, 8, 8},
+            },
+            false,
+            output
+        ),
+        "output preceding padded encoder tile rejected"
+    );
+}
+
 void testPolicyMatchesUpstreamTinyThreshold() {
     expectFalse(
         kira::pisa::requiresVaeTiling(
@@ -225,6 +326,9 @@ void testLongThinInputStillCoversOutput() {
 int main() {
     testEncoderPlanMatchesOfficialDefaults();
     testDecoderPlanMatchesOfficialDefaults();
+    testComputesEncoderLocalCrops();
+    testComputesDecoderLocalCrops();
+    testRejectsInvalidLocalCrop();
     testPolicyMatchesUpstreamTinyThreshold();
     testRejectsInvalidEncoderDimensions();
     testLongThinInputStillCoversOutput();

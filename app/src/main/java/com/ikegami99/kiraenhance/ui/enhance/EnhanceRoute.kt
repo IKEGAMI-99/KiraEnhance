@@ -223,7 +223,11 @@ fun EnhanceRoute(
                             resultBitmap = result.bitmap
                             state = EnhanceUiReducer.reduce(
                                 state,
-                                EnhanceEvent.ProcessingCompleted(result.elapsedMs),
+                                EnhanceEvent.ProcessingCompleted(
+                                    elapsedMs = result.elapsedMs,
+                                    outputWidth = result.bitmap.width,
+                                    outputHeight = result.bitmap.height,
+                                ),
                             )
                             logger.log(
                                 "Enhance",

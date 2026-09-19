@@ -30,7 +30,11 @@ sealed interface EnhanceEvent {
         val totalTiles: Int,
         val elapsedMs: Long,
     ) : EnhanceEvent
-    data class ProcessingCompleted(val elapsedMs: Long) : EnhanceEvent
+    data class ProcessingCompleted(
+        val elapsedMs: Long,
+        val outputWidth: Int,
+        val outputHeight: Int,
+    ) : EnhanceEvent
     data object Cancelled : EnhanceEvent
     data class Failed(val message: String) : EnhanceEvent
     data class Saved(val location: String) : EnhanceEvent
@@ -79,12 +83,19 @@ object EnhanceUiReducer {
             )
         }
 
-        is EnhanceEvent.ProcessingCompleted -> state.copy(
-            stage = EnhanceStage.COMPLETED,
-            progressFraction = 1f,
-            elapsedMs = event.elapsedMs.coerceAtLeast(0L),
-            status = "高画質化が完了しました",
-        )
+        is EnhanceEvent.ProcessingCompleted -> {
+            require(event.outputWidth > 0 && event.outputHeight > 0) {
+                "Output dimensions must be positive"
+            }
+            state.copy(
+                stage = EnhanceStage.COMPLETED,
+                targetWidth = event.outputWidth,
+                targetHeight = event.outputHeight,
+                progressFraction = 1f,
+                elapsedMs = event.elapsedMs.coerceAtLeast(0L),
+                status = "高画質化が完了しました",
+            )
+        }
 
         EnhanceEvent.Cancelled -> state.copy(
             stage = EnhanceStage.READY,

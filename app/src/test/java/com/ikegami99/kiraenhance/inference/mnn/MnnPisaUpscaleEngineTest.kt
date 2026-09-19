@@ -272,6 +272,39 @@ class MnnPisaUpscaleEngineTest {
     }
 
     @Test
+    fun `small PiSA input is forwarded to native preprocessing`() {
+        val native = FakeMnnPisaNativeApi(
+            inferenceResult = MnnPisaNativeInferenceResult(
+                errorCode = MnnPisaNativeError.NONE,
+                outputWidth = 256,
+                outputHeight = 384,
+                outputRowStrideBytes = 1024,
+                gpuUsed = true,
+            ),
+        )
+        val engine = MnnPisaUpscaleEngine(native)
+        assertTrue(engine.load(request()) is ModelLoadResult.Loaded)
+
+        val result = engine.upscale(
+            input = UpscaleInput(
+                width = 64,
+                height = 96,
+                rowStrideBytes = 256,
+                pixelFormat = PixelFormat.RGBA_8888,
+                pixels = ByteBuffer.allocateDirect(64 * 96 * 4),
+            ),
+            settings = UpscaleSettings(outputScale = 4),
+        )
+
+        assertTrue(result is UpscaleResult.Success)
+        val success = result as UpscaleResult.Success
+        assertEquals(256, success.output.width)
+        assertEquals(384, success.output.height)
+        assertEquals(1024, success.output.rowStrideBytes)
+        assertEquals(1, native.inferCalls)
+    }
+
+    @Test
     fun `odd sized PiSA input keeps exact four-x app output`() {
         val native = FakeMnnPisaNativeApi(
             inferenceResult = MnnPisaNativeInferenceResult(

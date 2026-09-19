@@ -2142,6 +2142,16 @@ Java_com_ikegami99_kiraenhance_inference_mnn_MnnPisaNativeBridge_nativeInfer(
         );
     }
 
+    // The official validation runner records decoder_output after
+    // clamp(-1, 1). Apply the same mathematically equivalent clamp before
+    // fingerprinting so this stage compares like-for-like with its NPZ dump.
+    for (std::size_t index = 0; index < imageCount; ++index) {
+        decodedImage[index] = std::clamp(
+            decodedImage[index],
+            -1.0f,
+            1.0f
+        );
+    }
     stageFingerprints.decodedImage =
         kira::pisa::makeTensorFingerprint(
             decodedImage.get(),

@@ -1,5 +1,6 @@
 #include <jni.h>
 
+#include "mnn_pisa_segmented_vae.h"
 #include "mnn_pisa_tensor_io.h"
 #include "pisa_adain.h"
 #include "pisa_denoise_math.h"
@@ -12,6 +13,7 @@
 #include "pisa_tile_plan.h"
 #include "pisa_tiled_inference.h"
 #include "pisa_vae_segment_pack.h"
+#include "pisa_vae_tile_plan.h"
 
 #include <algorithm>
 #include <atomic>
@@ -44,6 +46,10 @@ constexpr int PISA_UNET_TILE_SIZE = 96;
 constexpr int PISA_UNET_TILE_OVERLAP = 32;
 constexpr std::size_t PISA_VAE_ENCODER_SEGMENTS = 23;
 constexpr std::size_t PISA_VAE_DECODER_SEGMENTS = 31;
+constexpr int PISA_VAE_ENCODER_TILE_SIZE = 1024;
+constexpr int PISA_VAE_ENCODER_PADDING = 32;
+constexpr int PISA_VAE_DECODER_TILE_SIZE = 224;
+constexpr int PISA_VAE_DECODER_PADDING = 11;
 constexpr int SMOKE_SOURCE_WIDTH = 2;
 constexpr int SMOKE_SOURCE_HEIGHT = 2;
 constexpr int SMOKE_SOURCE_STRIDE = SMOKE_SOURCE_WIDTH * 4;
@@ -622,6 +628,47 @@ bool prepareUnetGraph(
     );
 }
 
+bool prepareUnetForLatentGraph(
+    PisaModelBundle& bundle,
+    int latentWidth,
+    int latentHeight
+) {
+    if (latentWidth <= 0 || latentHeight <= 0) {
+        return false;
+    }
+
+    int unetWidth = latentWidth;
+    int unetHeight = latentHeight;
+    if (
+        kira::pisa::requiresTiling(
+            latentWidth,
+            latentHeight,
+            PISA_UNET_TILE_SIZE
+        )
+    ) {
+        kira::pisa::TilePlan tilePlan;
+        if (
+            !kira::pisa::buildTilePlan(
+                latentWidth,
+                latentHeight,
+                PISA_UNET_TILE_SIZE,
+                PISA_UNET_TILE_OVERLAP,
+                tilePlan
+            )
+        ) {
+            return false;
+        }
+        unetWidth = tilePlan.tileSize;
+        unetHeight = tilePlan.tileSize;
+    }
+
+    return prepareUnetGraph(
+        bundle,
+        unetWidth,
+        unetHeight
+    );
+}
+
 bool preparePisaGraph(
     PisaModelBundle& bundle,
     int imageWidth,
@@ -661,35 +708,10 @@ bool preparePisaGraph(
         return false;
     }
 
-    int unetWidth = latentWidth;
-    int unetHeight = latentHeight;
-    if (
-        kira::pisa::requiresTiling(
-            latentWidth,
-            latentHeight,
-            PISA_UNET_TILE_SIZE
-        )
-    ) {
-        kira::pisa::TilePlan tilePlan;
-        if (
-            !kira::pisa::buildTilePlan(
-                latentWidth,
-                latentHeight,
-                PISA_UNET_TILE_SIZE,
-                PISA_UNET_TILE_OVERLAP,
-                tilePlan
-            )
-        ) {
-            return false;
-        }
-        unetWidth = tilePlan.tileSize;
-        unetHeight = tilePlan.tileSize;
-    }
-
-    if (!prepareUnetGraph(
+    if (!prepareUnetForLatentGraph(
         bundle,
-        unetWidth,
-        unetHeight
+        latentWidth,
+        latentHeight
     )) {
         return false;
     }
@@ -1011,6 +1033,176 @@ NativeError runPisaLatentPipeline(
         return NativeError::INFERENCE_FAILED;
     }
 
+    return NativeError::NONE;
+}
+
+bool collectSegmentInterpreters(
+    const std::vector<InterpreterPtr>& owned,
+    std::vector<MNN::Interpreter*>& output
+) {
+    output.clear();
+    output.reserve(owned.size());
+    for (const InterpreterPtr& interpreter : owned) {
+        if (!interpreter) {
+            output.clear();
+            return false;
+        }
+        output.push_back(interpreter.get());
+    }
+    return !output.empty();
+}
+
+bool segmentedVaeCancelled(void* rawContext) {
+    auto* bundle = static_cast<PisaModelBundle*>(rawContext);
+    return bundle != nullptr && isCancellationRequested(*bundle);
+}
+
+NativeError runPisaSegmentedGraph(
+    PisaModelBundle& bundle,
+    const float* encoderImage,
+    int imageWidth,
+    int imageHeight,
+    std::uint64_t noiseSeed,
+    float* decodedImage,
+    std::size_t decodedImageCount,
+    int& completedStages
+) {
+    completedStages = 0;
+    if (
+        encoderImage == nullptr ||
+        decodedImage == nullptr ||
+        imageWidth <= 0 ||
+        imageHeight <= 0 ||
+        imageWidth % 8 != 0 ||
+        imageHeight % 8 != 0
+    ) {
+        return NativeError::INVALID_ARGUMENT;
+    }
+
+    const int latentWidth = imageWidth / 8;
+    const int latentHeight = imageHeight / 8;
+    std::size_t momentsCount = 0;
+    std::size_t latentCount = 0;
+    std::size_t expectedImageCount = 0;
+    if (
+        !checkedElementCount(
+            {
+                8U,
+                static_cast<std::size_t>(latentHeight),
+                static_cast<std::size_t>(latentWidth),
+            },
+            momentsCount
+        ) ||
+        !checkedElementCount(
+            {
+                4U,
+                static_cast<std::size_t>(latentHeight),
+                static_cast<std::size_t>(latentWidth),
+            },
+            latentCount
+        ) ||
+        !checkedElementCount(
+            {
+                3U,
+                static_cast<std::size_t>(imageHeight),
+                static_cast<std::size_t>(imageWidth),
+            },
+            expectedImageCount
+        ) ||
+        decodedImageCount < expectedImageCount
+    ) {
+        return NativeError::OUT_OF_MEMORY;
+    }
+
+    std::unique_ptr<float[]> moments(
+        new (std::nothrow) float[momentsCount]
+    );
+    std::unique_ptr<float[]> decoderLatent(
+        new (std::nothrow) float[latentCount]
+    );
+    if (!moments || !decoderLatent) {
+        return NativeError::OUT_OF_MEMORY;
+    }
+
+    std::vector<MNN::Interpreter*> encoderSegments;
+    std::vector<MNN::Interpreter*> decoderSegments;
+    if (
+        !collectSegmentInterpreters(
+            bundle.vaeEncoderSegments,
+            encoderSegments
+        ) ||
+        !collectSegmentInterpreters(
+            bundle.vaeDecoderSegments,
+            decoderSegments
+        )
+    ) {
+        return NativeError::LOAD_FAILED;
+    }
+
+    if (
+        !kira::pisa::runMnnSegmentedVae(
+            encoderSegments,
+            bundle.vaeSegmentPack.encoderAffine,
+            bundle.backend,
+            encoderImage,
+            3,
+            imageWidth,
+            imageHeight,
+            PISA_VAE_ENCODER_TILE_SIZE,
+            PISA_VAE_ENCODER_PADDING,
+            false,
+            8,
+            segmentedVaeCancelled,
+            &bundle,
+            moments.get(),
+            momentsCount
+        )
+    ) {
+        return isCancellationRequested(bundle)
+            ? NativeError::CANCELLED
+            : NativeError::INFERENCE_FAILED;
+    }
+    completedStages = 1;
+
+    const NativeError latentResult = runPisaLatentPipeline(
+        bundle,
+        moments.get(),
+        latentWidth,
+        latentHeight,
+        noiseSeed,
+        decoderLatent.get(),
+        latentCount,
+        completedStages
+    );
+    if (latentResult != NativeError::NONE) {
+        return latentResult;
+    }
+
+    if (
+        !kira::pisa::runMnnSegmentedVae(
+            decoderSegments,
+            bundle.vaeSegmentPack.decoderAffine,
+            bundle.backend,
+            decoderLatent.get(),
+            4,
+            latentWidth,
+            latentHeight,
+            PISA_VAE_DECODER_TILE_SIZE,
+            PISA_VAE_DECODER_PADDING,
+            true,
+            3,
+            segmentedVaeCancelled,
+            &bundle,
+            decodedImage,
+            decodedImageCount
+        )
+    ) {
+        return isCancellationRequested(bundle)
+            ? NativeError::CANCELLED
+            : NativeError::INFERENCE_FAILED;
+    }
+
+    completedStages = 3;
     return NativeError::NONE;
 }
 
@@ -1627,29 +1819,41 @@ Java_com_ikegami99_kiraenhance_inference_mnn_MnnPisaNativeBridge_nativeInfer(
         );
     }
 
-    // Reject unsupported high-resolution VAE work before resizing MNN
-    // sessions. This also protects extreme aspect-ratio small inputs whose
-    // upstream pre-boost can create a very large aligned model image.
-    if (modelPixels > MAX_MONOLITHIC_MODEL_PIXELS) {
-        return makeInferenceResult(
-            env,
-            NativeError::NOT_IMPLEMENTED,
-            0,
-            0,
-            0,
-            isGpuBackend(bundle->backend)
+    const bool useSegmentedVae =
+        modelPixels > MAX_MONOLITHIC_MODEL_PIXELS ||
+        kira::pisa::requiresVaeTiling(
+            resizePlan.modelWidth,
+            resizePlan.modelHeight,
+            PISA_VAE_ENCODER_TILE_SIZE,
+            PISA_VAE_ENCODER_PADDING
         );
-    }
 
     int latentWidth = 0;
     int latentHeight = 0;
-    if (!preparePisaGraph(
-        *bundle,
-        resizePlan.modelWidth,
-        resizePlan.modelHeight,
-        latentWidth,
-        latentHeight
-    )) {
+    bool graphPrepared = false;
+    if (useSegmentedVae) {
+        if (
+            resizePlan.modelWidth % 8 == 0 &&
+            resizePlan.modelHeight % 8 == 0
+        ) {
+            latentWidth = resizePlan.modelWidth / 8;
+            latentHeight = resizePlan.modelHeight / 8;
+            graphPrepared = prepareUnetForLatentGraph(
+                *bundle,
+                latentWidth,
+                latentHeight
+            );
+        }
+    } else {
+        graphPrepared = preparePisaGraph(
+            *bundle,
+            resizePlan.modelWidth,
+            resizePlan.modelHeight,
+            latentWidth,
+            latentHeight
+        );
+    }
+    if (!graphPrepared) {
         return makeInferenceResult(
             env,
             NativeError::LOAD_FAILED,
@@ -1769,21 +1973,73 @@ Java_com_ikegami99_kiraenhance_inference_mnn_MnnPisaNativeBridge_nativeInfer(
         );
     }
 
-    MNN::Tensor* encoderInput =
-        bundle->vaeEncoder->getSessionInput(
-            bundle->vaeEncoderSession,
-            "image"
-        );
-    if (
-        !kira::pisa::writeFloatNchwTensor(
-            encoderInput,
+    int completedStages = 0;
+    NativeError graphResult = NativeError::NONE;
+    if (useSegmentedVae) {
+        graphResult = runPisaSegmentedGraph(
+            *bundle,
             sourceImage.get(),
-            imageCount
-        )
-    ) {
+            resizePlan.modelWidth,
+            resizePlan.modelHeight,
+            INFERENCE_NOISE_SEED,
+            decodedImage.get(),
+            imageCount,
+            completedStages
+        );
+    } else {
+        MNN::Tensor* encoderInput =
+            bundle->vaeEncoder->getSessionInput(
+                bundle->vaeEncoderSession,
+                "image"
+            );
+        if (
+            !kira::pisa::writeFloatNchwTensor(
+                encoderInput,
+                sourceImage.get(),
+                imageCount
+            )
+        ) {
+            return makeInferenceResult(
+                env,
+                NativeError::INFERENCE_FAILED,
+                0,
+                0,
+                0,
+                isGpuBackend(bundle->backend)
+            );
+        }
+
+        graphResult = runPisaPreparedGraph(
+            *bundle,
+            latentWidth,
+            latentHeight,
+            INFERENCE_NOISE_SEED,
+            completedStages
+        );
+        if (graphResult == NativeError::NONE && completedStages == 3) {
+            const MNN::Tensor* decoderOutput =
+                bundle->vaeDecoder->getSessionOutput(
+                    bundle->vaeDecoderSession,
+                    "image"
+                );
+            if (
+                !kira::pisa::readFloatNchwTensor(
+                    decoderOutput,
+                    decodedImage.get(),
+                    imageCount
+                )
+            ) {
+                graphResult = NativeError::INFERENCE_FAILED;
+            }
+        }
+    }
+
+    if (graphResult != NativeError::NONE || completedStages != 3) {
         return makeInferenceResult(
             env,
-            NativeError::INFERENCE_FAILED,
+            graphResult == NativeError::NONE
+                ? NativeError::INFERENCE_FAILED
+                : graphResult,
             0,
             0,
             0,
@@ -1800,49 +2056,6 @@ Java_com_ikegami99_kiraenhance_inference_mnn_MnnPisaNativeBridge_nativeInfer(
             resizePlan.modelHeight,
             modelRowStrideBytes,
             sourceImage.get(),
-            imageCount
-        )
-    ) {
-        return makeInferenceResult(
-            env,
-            NativeError::INFERENCE_FAILED,
-            0,
-            0,
-            0,
-            isGpuBackend(bundle->backend)
-        );
-    }
-
-    int completedStages = 0;
-    const NativeError graphResult = runPisaPreparedGraph(
-        *bundle,
-        latentWidth,
-        latentHeight,
-        INFERENCE_NOISE_SEED,
-        completedStages
-    );
-    if (graphResult != NativeError::NONE || completedStages != 3) {
-        return makeInferenceResult(
-            env,
-            graphResult == NativeError::NONE
-                ? NativeError::INFERENCE_FAILED
-                : graphResult,
-            0,
-            0,
-            0,
-            isGpuBackend(bundle->backend)
-        );
-    }
-
-    const MNN::Tensor* decoderOutput =
-        bundle->vaeDecoder->getSessionOutput(
-            bundle->vaeDecoderSession,
-            "image"
-        );
-    if (
-        !kira::pisa::readFloatNchwTensor(
-            decoderOutput,
-            decodedImage.get(),
             imageCount
         )
     ) {

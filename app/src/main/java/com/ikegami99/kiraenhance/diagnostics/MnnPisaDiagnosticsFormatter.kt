@@ -43,7 +43,20 @@ object MnnPisaDiagnosticsFormatter {
         append(diagnostic.gpuUsed)
         append(" vaePeakBytes=")
         append(diagnostic.nativePeakTrackedBytes)
+        append(" momentsFp=")
+        append(fingerprintHex(diagnostic.momentsFingerprint))
+        append(" sampledLatentFp=")
+        append(fingerprintHex(diagnostic.sampledLatentFingerprint))
+        append(" modelPredFp=")
+        append(fingerprintHex(diagnostic.modelPredictionFingerprint))
+        append(" decoderLatentFp=")
+        append(fingerprintHex(diagnostic.decoderLatentFingerprint))
+        append(" decodedFp=")
+        append(fingerprintHex(diagnostic.decodedImageFingerprint))
     }
+
+    private fun fingerprintHex(value: Long): String =
+        java.lang.Long.toUnsignedString(value, 16).padStart(16, '0')
 
     fun format(snapshot: MnnPisaDiagnosticsSnapshot): List<String> {
         val session = snapshot.sessionInfo

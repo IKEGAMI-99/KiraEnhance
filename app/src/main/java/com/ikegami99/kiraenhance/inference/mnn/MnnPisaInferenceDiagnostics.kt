@@ -20,4 +20,9 @@ data class MnnPisaInferenceDiagnostics(
     val gpuUsed: Boolean,
     val segmentedVae: Boolean = false,
     val nativePeakTrackedBytes: Long = 0L,
+    val momentsFingerprint: Long = 0L,
+    val sampledLatentFingerprint: Long = 0L,
+    val modelPredictionFingerprint: Long = 0L,
+    val decoderLatentFingerprint: Long = 0L,
+    val decodedImageFingerprint: Long = 0L,
 )

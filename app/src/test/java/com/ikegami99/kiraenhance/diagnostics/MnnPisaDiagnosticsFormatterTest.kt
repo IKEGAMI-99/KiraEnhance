@@ -76,13 +76,21 @@ class MnnPisaDiagnosticsFormatterTest {
             gpuUsed = true,
             segmentedVae = true,
             nativePeakTrackedBytes = 134_217_728L,
+            momentsFingerprint = 0x0123_4567_89ab_cdefL,
+            sampledLatentFingerprint = -1L,
+            modelPredictionFingerprint = 0x1111_2222_3333_4444L,
+            decoderLatentFingerprint = Long.MIN_VALUE,
+            decodedImageFingerprint = 0x7fff_ffff_ffff_ffffL,
         )
 
         assertEquals(
             "source=64x96 pre=128x192 rawModel=512x768 model=512x768 " +
                 "vae=segmented output=256x384 boosted=true seed=42 backend=opencl " +
                 "nativeError=none nativeOutput=256x384 gpu=true " +
-                "vaePeakBytes=134217728",
+                "vaePeakBytes=134217728 " +
+                "momentsFp=0123456789abcdef sampledLatentFp=ffffffffffffffff " +
+                "modelPredFp=1111222233334444 decoderLatentFp=8000000000000000 " +
+                "decodedFp=7fffffffffffffff",
             MnnPisaDiagnosticsFormatter.formatInference(diagnostic),
         )
     }

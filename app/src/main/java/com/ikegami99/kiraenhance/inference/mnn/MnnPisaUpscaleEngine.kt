@@ -347,6 +347,11 @@ class MnnPisaUpscaleEngine(
             segmentedVae = usesSegmentedVae(geometry),
             nativePeakTrackedBytes =
                 nativeResult.segmentedVaePeakTrackedBytes,
+            momentsFingerprint = nativeResult.momentsFingerprint,
+            sampledLatentFingerprint = nativeResult.sampledLatentFingerprint,
+            modelPredictionFingerprint = nativeResult.modelPredictionFingerprint,
+            decoderLatentFingerprint = nativeResult.decoderLatentFingerprint,
+            decodedImageFingerprint = nativeResult.decodedImageFingerprint,
         )
         runCatching {
             onInferenceDiagnostics(diagnostic)

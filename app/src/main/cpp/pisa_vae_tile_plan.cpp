@@ -407,4 +407,96 @@ bool buildVaeTilePlan(
     return true;
 }
 
+bool localOutputCropForVaeTile(
+    const VaeTileRegion& tile,
+    bool decoder,
+    TileRegion& output
+) {
+    output = TileRegion{};
+
+    if (
+        tile.input.x < 0 ||
+        tile.input.y < 0 ||
+        tile.input.width <= 0 ||
+        tile.input.height <= 0 ||
+        tile.output.x < 0 ||
+        tile.output.y < 0 ||
+        tile.output.width <= 0 ||
+        tile.output.height <= 0
+    ) {
+        return false;
+    }
+
+    int inputEndX = 0;
+    int inputEndY = 0;
+    if (
+        !checkedAdd(
+            tile.input.x,
+            tile.input.width,
+            inputEndX
+        ) ||
+        !checkedAdd(
+            tile.input.y,
+            tile.input.height,
+            inputEndY
+        )
+    ) {
+        return false;
+    }
+
+    int scaledInputX = 0;
+    int scaledInputY = 0;
+    int scaledInputEndX = 0;
+    int scaledInputEndY = 0;
+    if (
+        !scaleEndpoint(
+            tile.input.x,
+            decoder,
+            scaledInputX
+        ) ||
+        !scaleEndpoint(
+            tile.input.y,
+            decoder,
+            scaledInputY
+        ) ||
+        !scaleEndpoint(
+            inputEndX,
+            decoder,
+            scaledInputEndX
+        ) ||
+        !scaleEndpoint(
+            inputEndY,
+            decoder,
+            scaledInputEndY
+        )
+    ) {
+        return false;
+    }
+
+    const int localX = tile.output.x - scaledInputX;
+    const int localY = tile.output.y - scaledInputY;
+    const int fullWidth =
+        scaledInputEndX - scaledInputX;
+    const int fullHeight =
+        scaledInputEndY - scaledInputY;
+    if (
+        localX < 0 ||
+        localY < 0 ||
+        fullWidth <= 0 ||
+        fullHeight <= 0 ||
+        tile.output.width > fullWidth - localX ||
+        tile.output.height > fullHeight - localY
+    ) {
+        return false;
+    }
+
+    output = TileRegion{
+        localX,
+        localY,
+        tile.output.width,
+        tile.output.height,
+    };
+    return true;
+}
+
 }  // namespace kira::pisa

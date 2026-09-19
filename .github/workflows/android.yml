@@ -107,6 +107,17 @@ jobs:
             -o "$RUNNER_TEMP/pisa_vae_tile_plan_test"
           "$RUNNER_TEMP/pisa_vae_tile_plan_test"
 
+      - name: Test PiSA VAE GroupNorm statistics
+        shell: bash
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror \
+            -Iapp/src/main/cpp \
+            app/src/test/cpp/pisa_group_norm_stats_test.cpp \
+            app/src/main/cpp/pisa_group_norm_stats.cpp \
+            -o "$RUNNER_TEMP/pisa_group_norm_stats_test"
+          "$RUNNER_TEMP/pisa_group_norm_stats_test"
+
       - name: Test PiSA VAE tile stitching
         shell: bash
         run: |

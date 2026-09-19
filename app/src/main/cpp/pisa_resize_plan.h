@@ -7,6 +7,8 @@ struct ResizePlan {
     int sourceHeight = 0;
     int preUpscaleWidth = 0;
     int preUpscaleHeight = 0;
+    int rawModelWidth = 0;
+    int rawModelHeight = 0;
     int modelWidth = 0;
     int modelHeight = 0;
     int outputWidth = 0;

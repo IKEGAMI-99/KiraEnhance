@@ -345,6 +345,8 @@ class MnnPisaUpscaleEngine(
             nativeOutputHeight = nativeResult.outputHeight,
             gpuUsed = nativeResult.gpuUsed,
             segmentedVae = usesSegmentedVae(geometry),
+            nativePeakTrackedBytes =
+                nativeResult.segmentedVaePeakTrackedBytes,
         )
         runCatching {
             onInferenceDiagnostics(diagnostic)

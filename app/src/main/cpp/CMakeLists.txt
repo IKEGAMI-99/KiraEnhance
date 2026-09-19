@@ -44,6 +44,7 @@ add_library(
     kira_native.cpp
     mnn_runtime_probe.cpp
     mnn_pisa_loader.cpp
+    mnn_pisa_segmented_vae.cpp
     mnn_pisa_tensor_io.cpp
     pisa_latent_math.cpp
     pisa_gaussian_noise.cpp

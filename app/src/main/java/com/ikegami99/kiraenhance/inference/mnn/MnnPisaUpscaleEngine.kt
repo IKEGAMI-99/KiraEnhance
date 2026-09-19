@@ -166,16 +166,6 @@ class MnnPisaUpscaleEngine(
             return failed(EngineErrorCode.OUT_OF_MEMORY, "PiSA-SR output dimensions are too large")
         }
 
-        if (
-            input.width < MIN_MONOLITHIC_SOURCE_SIDE ||
-            input.height < MIN_MONOLITHIC_SOURCE_SIDE
-        ) {
-            return failed(
-                EngineErrorCode.INFERENCE_FAILED,
-                "PiSA-SR minimum-size preprocessing is not implemented yet",
-            )
-        }
-
         if (outputWidthLong > Long.MAX_VALUE / outputHeightLong) {
             return failed(EngineErrorCode.OUT_OF_MEMORY, "PiSA-SR output dimensions are too large")
         }
@@ -329,7 +319,6 @@ class MnnPisaUpscaleEngine(
         const val MODEL_ID = "pisa-sr"
         const val NATIVE_SCALE = 4
         const val BYTES_PER_PIXEL = 4
-        const val MIN_MONOLITHIC_SOURCE_SIDE = 128
         const val MAX_MONOLITHIC_OUTPUT_PIXELS = 1024L * 1024L
     }
 }

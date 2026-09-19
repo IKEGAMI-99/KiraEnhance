@@ -1495,6 +1495,40 @@ Java_com_ikegami99_kiraenhance_inference_mnn_MnnPisaNativeBridge_nativeInfer(
         return makeInferenceResult(env, NativeError::INVALID_ARGUMENT);
     }
 
+    std::size_t modelPixels = 0;
+    if (
+        !checkedElementCount(
+            {
+                static_cast<std::size_t>(resizePlan.modelHeight),
+                static_cast<std::size_t>(resizePlan.modelWidth),
+            },
+            modelPixels
+        )
+    ) {
+        return makeInferenceResult(
+            env,
+            NativeError::OUT_OF_MEMORY,
+            0,
+            0,
+            0,
+            isGpuBackend(bundle->backend)
+        );
+    }
+
+    // Reject unsupported high-resolution VAE work before resizing MNN
+    // sessions. This also protects extreme aspect-ratio small inputs whose
+    // upstream pre-boost can create a very large aligned model image.
+    if (modelPixels > MAX_MONOLITHIC_MODEL_PIXELS) {
+        return makeInferenceResult(
+            env,
+            NativeError::NOT_IMPLEMENTED,
+            0,
+            0,
+            0,
+            isGpuBackend(bundle->backend)
+        );
+    }
+
     int latentWidth = 0;
     int latentHeight = 0;
     if (!preparePisaGraph(
@@ -1514,16 +1548,8 @@ Java_com_ikegami99_kiraenhance_inference_mnn_MnnPisaNativeBridge_nativeInfer(
         );
     }
 
-    std::size_t modelPixels = 0;
     std::size_t imageCount = 0;
     if (
-        !checkedElementCount(
-            {
-                static_cast<std::size_t>(resizePlan.modelHeight),
-                static_cast<std::size_t>(resizePlan.modelWidth),
-            },
-            modelPixels
-        ) ||
         !checkedElementCount(
             {3U, modelPixels},
             imageCount
@@ -1532,17 +1558,6 @@ Java_com_ikegami99_kiraenhance_inference_mnn_MnnPisaNativeBridge_nativeInfer(
         return makeInferenceResult(
             env,
             NativeError::OUT_OF_MEMORY,
-            0,
-            0,
-            0,
-            isGpuBackend(bundle->backend)
-        );
-    }
-
-    if (modelPixels > MAX_MONOLITHIC_MODEL_PIXELS) {
-        return makeInferenceResult(
-            env,
-            NativeError::NOT_IMPLEMENTED,
             0,
             0,
             0,

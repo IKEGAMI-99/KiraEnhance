@@ -83,6 +83,207 @@ bool scaleTransform(
     return true;
 }
 
+struct ScaledTransformContext {
+    int numerator = 1;
+    int denominator = 1;
+    int calls = 0;
+};
+
+bool nearestScaledTransform(
+    const float* input,
+    std::size_t inputCount,
+    int inputChannels,
+    int inputTileWidth,
+    int inputTileHeight,
+    float* output,
+    std::size_t outputCount,
+    int outputChannels,
+    int outputTileWidth,
+    int outputTileHeight,
+    void* rawContext
+) {
+    auto* context =
+        static_cast<ScaledTransformContext*>(rawContext);
+    if (
+        context == nullptr ||
+        input == nullptr ||
+        output == nullptr ||
+        inputChannels != 1 ||
+        outputChannels != 1 ||
+        context->numerator <= 0 ||
+        context->denominator <= 0 ||
+        inputCount !=
+            static_cast<std::size_t>(
+                inputTileWidth * inputTileHeight
+            ) ||
+        outputCount !=
+            static_cast<std::size_t>(
+                outputTileWidth * outputTileHeight
+            )
+    ) {
+        return false;
+    }
+
+    context->calls += 1;
+    for (int y = 0; y < outputTileHeight; ++y) {
+        const int sourceY =
+            y * context->denominator /
+            context->numerator;
+        if (sourceY < 0 || sourceY >= inputTileHeight) {
+            return false;
+        }
+        for (int x = 0; x < outputTileWidth; ++x) {
+            const int sourceX =
+                x * context->denominator /
+                context->numerator;
+            if (sourceX < 0 || sourceX >= inputTileWidth) {
+                return false;
+            }
+            output[
+                static_cast<std::size_t>(y) *
+                    outputTileWidth +
+                x
+            ] = input[
+                static_cast<std::size_t>(sourceY) *
+                    inputTileWidth +
+                sourceX
+            ];
+        }
+    }
+    return true;
+}
+
+void testDownscaledTiledTransformReconstructsAlignedGrid() {
+    constexpr int width = 8;
+    constexpr int height = 8;
+    std::vector<float> input(width * height);
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            input[
+                static_cast<std::size_t>(y) * width + x
+            ] = static_cast<float>(y * 100 + x);
+        }
+    }
+
+    std::vector<float> output(4 * 4, 0.0f);
+    ScaledTransformContext context{1, 2, 0};
+    expectTrue(
+        kira::pisa::runScaledTiledPlanarTransform(
+            input.data(),
+            1,
+            width,
+            height,
+            4,
+            2,
+            1,
+            1,
+            2,
+            nearestScaledTransform,
+            &context,
+            output.data(),
+            output.size()
+        ),
+        "downscaled tiled transform succeeds"
+    );
+    expectTrue(
+        context.calls > 1,
+        "downscaled path uses multiple tiles"
+    );
+
+    for (int y = 0; y < 4; ++y) {
+        for (int x = 0; x < 4; ++x) {
+            expectNear(
+                output[
+                    static_cast<std::size_t>(y) * 4 + x
+                ],
+                input[
+                    static_cast<std::size_t>(y * 2) *
+                        width +
+                    x * 2
+                ],
+                1.0e-5f,
+                "downscaled tiled output"
+            );
+        }
+    }
+}
+
+void testUpscaledTiledTransformReconstructsNearestGrid() {
+    constexpr int width = 4;
+    constexpr int height = 4;
+    std::vector<float> input(width * height);
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            input[
+                static_cast<std::size_t>(y) * width + x
+            ] = static_cast<float>(y * 10 + x);
+        }
+    }
+
+    std::vector<float> output(8 * 8, 0.0f);
+    ScaledTransformContext context{2, 1, 0};
+    expectTrue(
+        kira::pisa::runScaledTiledPlanarTransform(
+            input.data(),
+            1,
+            width,
+            height,
+            2,
+            1,
+            1,
+            2,
+            1,
+            nearestScaledTransform,
+            &context,
+            output.data(),
+            output.size()
+        ),
+        "upscaled tiled transform succeeds"
+    );
+
+    for (int y = 0; y < 8; ++y) {
+        for (int x = 0; x < 8; ++x) {
+            expectNear(
+                output[
+                    static_cast<std::size_t>(y) * 8 + x
+                ],
+                input[
+                    static_cast<std::size_t>(y / 2) *
+                        width +
+                    x / 2
+                ],
+                1.0e-5f,
+                "upscaled tiled output"
+            );
+        }
+    }
+}
+
+void testScaledRunnerRejectsInexactTileMapping() {
+    const float input[8 * 8] = {};
+    float output[4 * 4] = {};
+    ScaledTransformContext context{1, 2, 0};
+
+    expectFalse(
+        kira::pisa::runScaledTiledPlanarTransform(
+            input,
+            1,
+            8,
+            8,
+            4,
+            1,
+            1,
+            1,
+            2,
+            nearestScaledTransform,
+            &context,
+            output,
+            16
+        ),
+        "inexact scaled tile mapping rejected"
+    );
+}
+
 void testIdentityTransformReconstructsFullTensor() {
     constexpr int channels = 2;
     constexpr int width = 6;
@@ -288,6 +489,9 @@ void testRejectsInvalidBuffersAndParameters() {
 }  // namespace
 
 int main() {
+    testDownscaledTiledTransformReconstructsAlignedGrid();
+    testUpscaledTiledTransformReconstructsNearestGrid();
+    testScaledRunnerRejectsInexactTileMapping();
     testIdentityTransformReconstructsFullTensor();
     testScaledTransformBlendsWithoutSeams();
     testPropagatesTileTransformFailure();

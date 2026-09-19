@@ -158,6 +158,87 @@ void testRejectsNonProgressingOverlap() {
     );
 }
 
+void testScalesTileRegionsExactlyForVaeStages() {
+    const kira::pisa::TileRegion encoderInput{
+        64,
+        32,
+        512,
+        512,
+    };
+    kira::pisa::TileRegion latentTile;
+
+    expectTrue(
+        kira::pisa::scaleTileRegionExact(
+            encoderInput,
+            1,
+            8,
+            256,
+            192,
+            latentTile
+        ),
+        "encoder tile scales to latent space"
+    );
+    expectEqual(latentTile.x, 8, "encoder scaled x");
+    expectEqual(latentTile.y, 4, "encoder scaled y");
+    expectEqual(latentTile.width, 64, "encoder scaled width");
+    expectEqual(latentTile.height, 64, "encoder scaled height");
+
+    kira::pisa::TileRegion decodedTile;
+    expectTrue(
+        kira::pisa::scaleTileRegionExact(
+            latentTile,
+            8,
+            1,
+            2048,
+            1536,
+            decodedTile
+        ),
+        "decoder tile scales to image space"
+    );
+    expectEqual(decodedTile.x, 64, "decoder scaled x");
+    expectEqual(decodedTile.y, 32, "decoder scaled y");
+    expectEqual(decodedTile.width, 512, "decoder scaled width");
+    expectEqual(decodedTile.height, 512, "decoder scaled height");
+}
+
+void testRejectsInexactOrOutOfBoundsTileScaling() {
+    kira::pisa::TileRegion output;
+
+    expectFalse(
+        kira::pisa::scaleTileRegionExact(
+            kira::pisa::TileRegion{1, 0, 512, 512},
+            1,
+            8,
+            256,
+            256,
+            output
+        ),
+        "unaligned encoder tile rejected"
+    );
+    expectFalse(
+        kira::pisa::scaleTileRegionExact(
+            kira::pisa::TileRegion{192, 0, 96, 96},
+            1,
+            1,
+            256,
+            256,
+            output
+        ),
+        "scaled tile outside output bounds rejected"
+    );
+    expectFalse(
+        kira::pisa::scaleTileRegionExact(
+            kira::pisa::TileRegion{0, 0, 96, 96},
+            1,
+            0,
+            256,
+            256,
+            output
+        ),
+        "zero scale denominator rejected"
+    );
+}
+
 void testGaussianWeightsArePositiveSymmetricAndCenterWeighted() {
     std::vector<float> weights;
     expectTrue(
@@ -284,6 +365,8 @@ int main() {
     testBuildsRectangularPlan();
     testClampsTileToSmallerImageSide();
     testRejectsNonProgressingOverlap();
+    testScalesTileRegionsExactlyForVaeStages();
+    testRejectsInexactOrOutOfBoundsTileScaling();
     testGaussianWeightsArePositiveSymmetricAndCenterWeighted();
     testTilingPolicyUsesTileThreshold();
     testRejectsInvalidGaussianDimensions();

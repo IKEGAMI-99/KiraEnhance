@@ -48,6 +48,7 @@ add_library(
     pisa_latent_math.cpp
     pisa_gaussian_noise.cpp
     pisa_image_tensor.cpp
+    pisa_pillow_resize.cpp
     pisa_resize_plan.cpp
     pisa_tile_plan.cpp
     pisa_tile_tensor.cpp

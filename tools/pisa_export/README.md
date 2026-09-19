@@ -160,6 +160,36 @@ Keep this manifest with every candidate export. Two files named
 `unet_default.mnn` are not necessarily the same model, despite humanity's
 long-running campaign against useful filenames.
 
+## Deterministic official validation reference
+
+The upstream `test_pisasr.py` exposes `--seed`, but the current inference
+script does not apply that value before `latent_dist.sample()`. A direct
+comparison against that script can therefore change between runs even when the
+source image and model weights are identical.
+
+For parity work, generate the official-side reference with KiraEnhance's
+validation runner instead:
+
+```bash
+python tools/pisa_export/run_official_validation.py \
+  --pisa-repo /abs/path/PiSA-SR \
+  --sd21-base /abs/path/stable-diffusion-2-1-base \
+  --pisa-checkpoint /abs/path/pisa_sr.pkl \
+  --input-image /path/to/source.png \
+  --output-image /path/to/official-deterministic.png \
+  --seed 42
+```
+
+This keeps the official PiSA-SR model, VAE hook, UNet tiling, preprocessing,
+AdaIN, and final resize path. Only the posterior random draw is replaced with
+the same SplitMix64 + Box-Muller float32 sequence used by the Android native
+validation path.
+
+Use `--dump-npz /path/to/reference-stages.npz` to retain the posterior
+moments, validation noise, encoded latent, UNet prediction, denoised latent,
+and decoder output for later stage-by-stage diagnosis. The official runner
+currently requires CUDA because upstream `PiSASR_eval` hardcodes CUDA.
+
 ## Compare official and Android output
 
 After exporting the same source image from the official PiSA-SR pipeline and

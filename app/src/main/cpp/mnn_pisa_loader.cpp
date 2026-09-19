@@ -1073,15 +1073,8 @@ NativeError runPisaSmoke(
             bundle.vaeEncoderSession,
             "image"
         );
-    if (isCancellationRequested(*bundle)) {
-        return makeInferenceResult(
-            env,
-            NativeError::CANCELLED,
-            0,
-            0,
-            0,
-            isGpuBackend(bundle->backend)
-        );
+    if (isCancellationRequested(bundle)) {
+        return NativeError::CANCELLED;
     }
 
     if (
@@ -1554,6 +1547,17 @@ Java_com_ikegami99_kiraenhance_inference_mnn_MnnPisaNativeBridge_nativeInfer(
             bundle->vaeEncoderSession,
             "image"
         );
+    if (isCancellationRequested(*bundle)) {
+        return makeInferenceResult(
+            env,
+            NativeError::CANCELLED,
+            0,
+            0,
+            0,
+            isGpuBackend(bundle->backend)
+        );
+    }
+
     if (
         !kira::pisa::writeRgba8888BicubicNormalizedTensor(
             encoderInput,

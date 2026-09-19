@@ -608,6 +608,51 @@ def _collect_vae_segment_examples(
     return examples, current
 
 
+def _export_vae_segment_side_onnx(
+    torch: Any,
+    vae: Any,
+    side_name: str,
+    side_contract: dict[str, Any],
+    activation: Any,
+    output_dir: pathlib.Path,
+    opset: int,
+) -> list[pathlib.Path]:
+    segment_dir = output_dir / "vae_segments"
+    segment_dir.mkdir(parents=True, exist_ok=True)
+
+    examples, _ = _collect_vae_segment_examples(
+        torch,
+        vae,
+        side_contract,
+        activation,
+    )
+
+    paths: list[pathlib.Path] = []
+    for example in examples:
+        segment = example["segment"]
+        args = example["args"]
+        spec = _vae_segment_onnx_spec(side_name, segment)
+        path = segment_dir / spec["fileName"]
+
+        _export_onnx(
+            torch,
+            model=_make_vae_segment_wrapper(
+                torch,
+                vae,
+                segment,
+            ),
+            args=args,
+            output_path=path,
+            input_names=spec["inputNames"],
+            output_names=spec["outputNames"],
+            dynamic_axes=spec["dynamicAxes"],
+            opset=opset,
+        )
+        paths.append(path)
+
+    return paths
+
+
 def _make_unet_wrapper(torch: Any, unet: Any):
     class DefaultUnet(torch.nn.Module):
         def __init__(self, model):

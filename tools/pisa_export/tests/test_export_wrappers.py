@@ -2,6 +2,8 @@ import pathlib
 import sys
 import types
 import unittest
+from unittest.mock import patch
+import tempfile
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
@@ -249,6 +251,93 @@ class ExportWrapperTest(unittest.TestCase):
             "norm(conv_in(image))conv_in(image)",
             result,
         )
+
+    def test_exports_each_vae_segment_with_stable_names(self):
+        events = []
+        vae = types.SimpleNamespace(
+            encoder=types.SimpleNamespace(
+                conv_in=UnaryOp("conv_in", events),
+                norm=UnaryOp("norm", events),
+            )
+        )
+        side_contract = {
+            "segments": [
+                {
+                    "index": 0,
+                    "entryBarrier": None,
+                    "requiresResidualInput": False,
+                    "producesResidualOutput": True,
+                    "operations": [
+                        {
+                            "kind": "module",
+                            "modulePath": "encoder.conv_in",
+                            "residualKey": None,
+                            "shortcut": None,
+                        },
+                        {
+                            "kind": "store_residual",
+                            "modulePath": None,
+                            "residualKey": "r0",
+                            "shortcut": "identity",
+                        },
+                    ],
+                },
+                {
+                    "index": 1,
+                    "entryBarrier": "encoder.norm",
+                    "requiresResidualInput": True,
+                    "producesResidualOutput": False,
+                    "operations": [
+                        {
+                            "kind": "add_residual",
+                            "modulePath": None,
+                            "residualKey": "r0",
+                            "shortcut": None,
+                        }
+                    ],
+                },
+            ]
+        }
+        calls = []
+
+        def fake_export(torch, **kwargs):
+            calls.append(kwargs)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with patch.object(
+                export_pisa_sr,
+                "_export_onnx",
+                side_effect=fake_export,
+            ):
+                paths = export_pisa_sr._export_vae_segment_side_onnx(
+                    FakeTorch,
+                    vae,
+                    "encoder",
+                    side_contract,
+                    "image",
+                    pathlib.Path(temp_dir),
+                    17,
+                )
+
+        self.assertEqual(
+            [
+                "vae_encoder_segment_00.onnx",
+                "vae_encoder_segment_01.onnx",
+            ],
+            [path.name for path in paths],
+        )
+        self.assertEqual(2, len(calls))
+        self.assertEqual(["activation"], calls[0]["input_names"])
+        self.assertEqual(
+            ["activation_out", "residual_out"],
+            calls[0]["output_names"],
+        )
+        self.assertEqual(
+            ["activation", "residual"],
+            calls[1]["input_names"],
+        )
+        self.assertEqual(["activation_out"], calls[1]["output_names"])
+        self.assertEqual(17, calls[1]["opset"])
 
     def test_default_unet_forwards_all_three_inputs_and_returns_sample(self):
         unet = FakeUnet()

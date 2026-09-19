@@ -51,6 +51,17 @@ jobs:
             -o "$RUNNER_TEMP/pisa_image_tensor_test"
           "$RUNNER_TEMP/pisa_image_tensor_test"
 
+      - name: Test PiSA Pillow resizing
+        shell: bash
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror \
+            -Iapp/src/main/cpp \
+            app/src/test/cpp/pisa_pillow_resize_test.cpp \
+            app/src/main/cpp/pisa_pillow_resize.cpp \
+            -o "$RUNNER_TEMP/pisa_pillow_resize_test"
+          "$RUNNER_TEMP/pisa_pillow_resize_test"
+
       - name: Test PiSA resize planning
         shell: bash
         run: |

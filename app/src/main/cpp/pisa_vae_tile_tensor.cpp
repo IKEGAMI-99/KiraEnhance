@@ -110,6 +110,13 @@ bool copyCroppedPlanarTile(
 
     for (int y = 0; y < destination.height; ++y) {
         for (int x = 0; x < destination.width; ++x) {
+            const std::size_t tilePixel =
+                static_cast<std::size_t>(
+                    localCrop.y + y
+                ) * tileWidthSize +
+                static_cast<std::size_t>(
+                    localCrop.x + x
+                );
             const std::size_t outputPixel =
                 static_cast<std::size_t>(
                     destination.y + y
@@ -119,6 +126,16 @@ bool copyCroppedPlanarTile(
                 );
             if (coverage[outputPixel] != 0U) {
                 return false;
+            }
+
+            for (int channel = 0; channel < channels; ++channel) {
+                const std::size_t tileIndex =
+                    static_cast<std::size_t>(channel) *
+                        tilePixels +
+                    tilePixel;
+                if (!std::isfinite(tileValues[tileIndex])) {
+                    return false;
+                }
             }
         }
     }
@@ -149,11 +166,7 @@ bool copyCroppedPlanarTile(
                     static_cast<std::size_t>(channel) *
                         outputPixels +
                     outputPixel;
-                const float value = tileValues[tileIndex];
-                if (!std::isfinite(value)) {
-                    return false;
-                }
-                output[outputIndex] = value;
+                output[outputIndex] = tileValues[tileIndex];
             }
             coverage[outputPixel] = 1U;
         }

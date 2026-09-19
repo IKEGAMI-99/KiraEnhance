@@ -399,6 +399,30 @@ bool isCancellationRequested(
     );
 }
 
+class ScopedCancellationReset {
+public:
+    explicit ScopedCancellationReset(
+        PisaModelBundle& bundle
+    ) : bundle_(bundle) {}
+
+    ~ScopedCancellationReset() {
+        bundle_.cancelRequested.store(
+            false,
+            std::memory_order_release
+        );
+    }
+
+    ScopedCancellationReset(
+        const ScopedCancellationReset&
+    ) = delete;
+    ScopedCancellationReset& operator=(
+        const ScopedCancellationReset&
+    ) = delete;
+
+private:
+    PisaModelBundle& bundle_;
+};
+
 bool isGpuBackend(MNNForwardType backend) {
     return backend == MNN_FORWARD_OPENCL || backend == MNN_FORWARD_VULKAN;
 }
@@ -1440,10 +1464,7 @@ Java_com_ikegami99_kiraenhance_inference_mnn_MnnPisaNativeBridge_nativeInfer(
     if (bundle == nullptr) {
         return makeInferenceResult(env, NativeError::INVALID_ARGUMENT);
     }
-    bundle->cancelRequested.store(
-        false,
-        std::memory_order_release
-    );
+    ScopedCancellationReset cancellationReset(*bundle);
 
     kira::pisa::ResizePlan resizePlan;
     if (!kira::pisa::buildResizePlan(width, height, resizePlan)) {

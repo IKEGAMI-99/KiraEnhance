@@ -30,6 +30,21 @@ struct TileState {
     bool hasResidual = false;
 };
 
+bool checkedAdd(
+    std::size_t left,
+    std::size_t right,
+    std::size_t& output
+) {
+    if (
+        right >
+        std::numeric_limits<std::size_t>::max() - left
+    ) {
+        return false;
+    }
+    output = left + right;
+    return true;
+}
+
 bool checkedMultiply(
     std::size_t left,
     std::size_t right,
@@ -68,6 +83,84 @@ bool nchwCount(
             pixels,
             output
         );
+}
+
+bool floatVectorBytes(
+    const std::vector<float>& values,
+    std::size_t& output
+) {
+    return checkedMultiply(
+        values.size(),
+        sizeof(float),
+        output
+    );
+}
+
+bool tileStateBytes(
+    const TileState& state,
+    std::size_t& output
+) {
+    std::size_t activationBytes = 0;
+    std::size_t residualBytes = 0;
+    return
+        floatVectorBytes(state.activation, activationBytes) &&
+        floatVectorBytes(state.residual, residualBytes) &&
+        checkedAdd(
+            activationBytes,
+            residualBytes,
+            output
+        );
+}
+
+bool trackedStateBytes(
+    const std::vector<TileState>& states,
+    std::size_t& output
+) {
+    output = 0;
+    for (const TileState& state : states) {
+        std::size_t stateBytes = 0;
+        if (
+            !tileStateBytes(state, stateBytes) ||
+            !checkedAdd(output, stateBytes, output)
+        ) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool trackedActivationBytes(
+    const std::vector<TileState>& states,
+    std::size_t& output
+) {
+    output = 0;
+    for (const TileState& state : states) {
+        std::size_t activationBytes = 0;
+        if (
+            !floatVectorBytes(
+                state.activation,
+                activationBytes
+            ) ||
+            !checkedAdd(
+                output,
+                activationBytes,
+                output
+            )
+        ) {
+            return false;
+        }
+    }
+    return true;
+}
+
+void recordPeak(
+    SegmentedVaeMetrics* metrics,
+    std::size_t bytes
+) {
+    if (metrics != nullptr) {
+        metrics->peakTrackedBytes =
+            std::max(metrics->peakTrackedBytes, bytes);
+    }
 }
 
 bool tensorShape(
@@ -364,8 +457,13 @@ bool runMnnSegmentedVae(
     SegmentedVaeCancelProbe cancelProbe,
     void* cancelContext,
     float* output,
-    std::size_t outputCount
+    std::size_t outputCount,
+    SegmentedVaeMetrics* metrics
 ) {
+    if (metrics != nullptr) {
+        *metrics = SegmentedVaeMetrics{};
+    }
+
     if (
         segments.empty() ||
         affine.size() + 1 != segments.size() ||
@@ -411,6 +509,11 @@ bool runMnnSegmentedVae(
         return false;
     }
 
+    if (metrics != nullptr) {
+        metrics->tileCount = plan.tiles.size();
+        metrics->segmentCount = segments.size();
+    }
+
     std::vector<TileState> states(plan.tiles.size());
     for (std::size_t index = 0; index < plan.tiles.size(); ++index) {
         if (cancelled(cancelProbe, cancelContext)) {
@@ -447,7 +550,12 @@ bool runMnnSegmentedVae(
             )
         ) {
             return false;
+            std::size_t trackedBytes = 0;
+        if (!trackedStateBytes(states, trackedBytes)) {
+            return false;
         }
+        recordPeak(metrics, trackedBytes);
+    }
     }
 
     for (
@@ -468,6 +576,12 @@ bool runMnnSegmentedVae(
 
         bool success = true;
         for (TileState& state : states) {
+            std::size_t beforeBytes = 0;
+            if (!trackedStateBytes(states, beforeBytes)) {
+                success = false;
+                break;
+            }
+
             if (
                 cancelled(cancelProbe, cancelContext) ||
                 !runSegmentForTile(
@@ -479,20 +593,58 @@ bool runMnnSegmentedVae(
                 success = false;
                 break;
             }
+
+            std::size_t nextTileBytes = 0;
+            std::size_t temporaryPeak = 0;
+            std::size_t afterBytes = 0;
+            if (
+                !tileStateBytes(state, nextTileBytes) ||
+                !checkedAdd(
+                    beforeBytes,
+                    nextTileBytes,
+                    temporaryPeak
+                ) ||
+                !trackedStateBytes(states, afterBytes)
+            ) {
+                success = false;
+                break;
+            }
+            recordPeak(metrics, temporaryPeak);
+            recordPeak(metrics, afterBytes);
         }
         interpreter->releaseSession(session);
         if (!success) {
             return false;
         }
 
-        if (
-            segmentIndex < affine.size() &&
-            !normalizeStates(
-                states,
-                affine[segmentIndex]
-            )
-        ) {
-            return false;
+        if (segmentIndex < affine.size()) {
+            std::size_t stateBytes = 0;
+            std::size_t activationBytes = 0;
+            std::size_t normalizationPeak = 0;
+            if (
+                !trackedStateBytes(states, stateBytes) ||
+                !trackedActivationBytes(
+                    states,
+                    activationBytes
+                ) ||
+                !checkedAdd(
+                    stateBytes,
+                    activationBytes,
+                    normalizationPeak
+                )
+            ) {
+                return false;
+            }
+            recordPeak(metrics, normalizationPeak);
+
+            if (
+                !normalizeStates(
+                    states,
+                    affine[segmentIndex]
+                )
+            ) {
+                return false;
+            }
         }
     }
 

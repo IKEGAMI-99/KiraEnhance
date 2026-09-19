@@ -490,3 +490,132 @@ def validate_vae_tile_execution_contract(
             resolved_paths.add(module_path)
 
     return len(resolved_paths)
+
+
+def _apply_residual_operations(
+    operations: list[dict[str, Any]],
+    live_residual: str | None,
+) -> str | None:
+    current = live_residual
+    for operation in operations:
+        kind = operation.get("kind")
+        key = operation.get("residualKey")
+        if kind == "store_residual":
+            if current is not None:
+                raise ValueError(
+                    f"residual {current!r} is still live before storing {key!r}"
+                )
+            if not isinstance(key, str) or not key:
+                raise ValueError("store_residual requires a residual key")
+            current = key
+        elif kind == "add_residual":
+            if current != key:
+                raise ValueError(
+                    f"cannot consume residual {key!r}; live residual is {current!r}"
+                )
+            current = None
+    return current
+
+
+def _build_segment_side(
+    side_name: str,
+    side: dict[str, Any],
+) -> dict[str, Any]:
+    prelude = side.get("prelude")
+    stages = side.get("stages")
+    if not isinstance(prelude, list) or not isinstance(stages, list) or not stages:
+        raise ValueError(f"{side_name} execution recipe is incomplete")
+
+    live_residual = _apply_residual_operations(prelude, None)
+    first_barrier = stages[0]["barrier"]
+    first_key = first_barrier.get("residual_key")
+    if first_key != live_residual:
+        raise ValueError(
+            f"{side_name} prelude residual does not match first barrier"
+        )
+
+    segments: list[dict[str, Any]] = [
+        {
+            "index": 0,
+            "id": f"{side_name}_prelude",
+            "entryBarrier": None,
+            "exitBarrier": first_barrier["module_path"],
+            "requiresResidualInput": False,
+            "producesResidualOutput": live_residual is not None,
+            "residualKey": live_residual,
+            "operations": prelude,
+        }
+    ]
+
+    for stage_index, stage in enumerate(stages):
+        barrier = stage["barrier"]
+        barrier_key = barrier.get("residual_key")
+        if barrier_key != live_residual:
+            raise ValueError(
+                f"{side_name} barrier {barrier['module_path']} residual "
+                f"{barrier_key!r} does not match live residual {live_residual!r}"
+            )
+
+        requires_residual = live_residual is not None
+        after = stage.get("after")
+        if not isinstance(after, list):
+            raise ValueError(
+                f"{side_name} stage {stage_index} operations are missing"
+            )
+        live_residual = _apply_residual_operations(after, live_residual)
+
+        next_barrier = (
+            stages[stage_index + 1]["barrier"]["module_path"]
+            if stage_index + 1 < len(stages)
+            else None
+        )
+        if next_barrier is not None:
+            expected_key = stages[stage_index + 1]["barrier"].get(
+                "residual_key"
+            )
+            if expected_key != live_residual:
+                raise ValueError(
+                    f"{side_name} stage {stage_index} output residual does "
+                    f"not match next barrier"
+                )
+        elif live_residual is not None:
+            raise ValueError(
+                f"{side_name} final segment leaves residual {live_residual!r}"
+            )
+
+        segments.append(
+            {
+                "index": stage_index + 1,
+                "id": f"{side_name}_stage_{stage_index:02d}",
+                "entryBarrier": barrier["module_path"],
+                "exitBarrier": next_barrier,
+                "requiresResidualInput": requires_residual,
+                "producesResidualOutput": live_residual is not None,
+                "residualKey": live_residual,
+                "operations": after,
+            }
+        )
+
+    return {
+        "segmentCount": len(segments),
+        "segments": segments,
+    }
+
+
+def build_vae_tile_segment_contract(
+    execution_contract: dict[str, Any],
+) -> dict[str, Any]:
+    if execution_contract.get("schemaVersion") != 1:
+        raise ValueError("unsupported VAE tile execution contract schema")
+
+    return {
+        "schemaVersion": 1,
+        "encoder": _build_segment_side(
+            "encoder",
+            execution_contract["encoder"],
+        ),
+        "decoder": _build_segment_side(
+            "decoder",
+            execution_contract["decoder"],
+        ),
+    }

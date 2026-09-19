@@ -221,6 +221,65 @@ class VaeTileContractTest(unittest.TestCase):
             residual["modulePath"],
         )
 
+    def test_builds_segment_io_contract_from_residual_liveness(self):
+        execution = vae_tile_contract.build_vae_tile_execution_contract(
+            fake_vae()
+        )
+        contract = vae_tile_contract.build_vae_tile_segment_contract(
+            execution
+        )
+
+        encoder = contract["encoder"]
+        self.assertEqual(13, encoder["segmentCount"])
+        self.assertEqual("encoder_prelude", encoder["segments"][0]["id"])
+        self.assertFalse(
+            encoder["segments"][0]["requiresResidualInput"]
+        )
+        self.assertTrue(
+            encoder["segments"][0]["producesResidualOutput"]
+        )
+        self.assertEqual(
+            "encoder.down_blocks.0.resnets.0.norm1",
+            encoder["segments"][0]["exitBarrier"],
+        )
+
+        norm1_segment = encoder["segments"][1]
+        self.assertTrue(norm1_segment["requiresResidualInput"])
+        self.assertTrue(norm1_segment["producesResidualOutput"])
+        self.assertEqual(
+            "encoder.down_blocks.0.resnets.0.norm1",
+            norm1_segment["entryBarrier"],
+        )
+        self.assertEqual(
+            "encoder.down_blocks.0.resnets.0.norm2",
+            norm1_segment["exitBarrier"],
+        )
+
+        final_segment = encoder["segments"][-1]
+        self.assertFalse(final_segment["requiresResidualInput"])
+        self.assertFalse(final_segment["producesResidualOutput"])
+        self.assertIsNone(final_segment["exitBarrier"])
+        self.assertEqual(
+            ["silu", "module"],
+            [op["kind"] for op in final_segment["operations"]],
+        )
+
+        decoder = contract["decoder"]
+        self.assertEqual(15, decoder["segmentCount"])
+        self.assertEqual("decoder_prelude", decoder["segments"][0]["id"])
+        self.assertFalse(
+            decoder["segments"][-1]["producesResidualOutput"]
+        )
+
+    def test_segment_contract_rejects_residual_liveness_mismatch(self):
+        execution = vae_tile_contract.build_vae_tile_execution_contract(
+            fake_vae()
+        )
+        execution["encoder"]["prelude"][-1]["residualKey"] = "wrong"
+
+        with self.assertRaisesRegex(ValueError, "first barrier"):
+            vae_tile_contract.build_vae_tile_segment_contract(execution)
+
     def test_resolves_and_validates_all_execution_module_paths(self):
         model = fake_vae()
         contract = vae_tile_contract.build_vae_tile_execution_contract(model)

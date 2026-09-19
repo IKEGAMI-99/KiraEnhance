@@ -15,6 +15,7 @@ from export_contract import (
 from vae_tile_contract import (
     build_vae_tile_barrier_contract,
     build_vae_tile_execution_contract,
+    build_vae_tile_segment_contract,
     validate_vae_tile_execution_contract,
 )
 
@@ -679,6 +680,9 @@ def run(args: argparse.Namespace) -> pathlib.Path:
 
     vae_tile_barrier_contract = build_vae_tile_barrier_contract(vae)
     vae_tile_execution_contract = build_vae_tile_execution_contract(vae)
+    vae_tile_segment_contract = build_vae_tile_segment_contract(
+        vae_tile_execution_contract
+    )
     vae_tile_resolved_module_count = validate_vae_tile_execution_contract(
         vae,
         vae_tile_execution_contract,
@@ -722,6 +726,7 @@ def run(args: argparse.Namespace) -> pathlib.Path:
             "pisaRepoCommit": _git_commit(args.pisa_repo),
             "vaeTileBarrierContract": vae_tile_barrier_contract,
             "vaeTileExecutionContract": vae_tile_execution_contract,
+            "vaeTileSegmentContract": vae_tile_segment_contract,
             "vaeTileResolvedModuleCount": vae_tile_resolved_module_count,
         },
         artifact_paths=artifact_paths,

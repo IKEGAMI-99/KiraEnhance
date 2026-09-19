@@ -41,6 +41,8 @@ object MnnPisaDiagnosticsFormatter {
         append(diagnostic.nativeOutputHeight)
         append(" gpu=")
         append(diagnostic.gpuUsed)
+        append(" vaePeakBytes=")
+        append(diagnostic.nativePeakTrackedBytes)
     }
 
     fun format(snapshot: MnnPisaDiagnosticsSnapshot): List<String> {

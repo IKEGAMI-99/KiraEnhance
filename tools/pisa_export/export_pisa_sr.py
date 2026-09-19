@@ -12,7 +12,10 @@ from export_contract import (
     build_mnnconvert_command,
     write_export_manifest,
 )
-from vae_tile_contract import build_vae_tile_barrier_contract
+from vae_tile_contract import (
+    build_vae_tile_barrier_contract,
+    build_vae_tile_execution_contract,
+)
 
 
 PIXEL_ADAPTERS = (
@@ -674,6 +677,7 @@ def run(args: argparse.Namespace) -> pathlib.Path:
     )
 
     vae_tile_barrier_contract = build_vae_tile_barrier_contract(vae)
+    vae_tile_execution_contract = build_vae_tile_execution_contract(vae)
     if (
         vae_tile_barrier_contract["encoderBarrierCount"] != 22 or
         vae_tile_barrier_contract["decoderBarrierCount"] != 30
@@ -712,6 +716,7 @@ def run(args: argparse.Namespace) -> pathlib.Path:
             "pisaRepoPath": str(args.pisa_repo.resolve()),
             "pisaRepoCommit": _git_commit(args.pisa_repo),
             "vaeTileBarrierContract": vae_tile_barrier_contract,
+            "vaeTileExecutionContract": vae_tile_execution_contract,
         },
         artifact_paths=artifact_paths,
     )

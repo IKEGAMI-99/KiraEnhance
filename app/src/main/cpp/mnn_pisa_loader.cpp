@@ -868,6 +868,152 @@ bool runUnetTileTransform(
     return true;
 }
 
+NativeError runPisaLatentPipeline(
+    PisaModelBundle& bundle,
+    const float* moments,
+    int latentWidth,
+    int latentHeight,
+    std::uint64_t noiseSeed,
+    float* decoderLatent,
+    std::size_t latentCount,
+    int& completedStages
+) {
+    if (
+        moments == nullptr ||
+        decoderLatent == nullptr ||
+        latentWidth <= 0 ||
+        latentHeight <= 0 ||
+        latentCount == 0
+    ) {
+        return NativeError::INVALID_ARGUMENT;
+    }
+
+    if (isCancellationRequested(bundle)) {
+        return NativeError::CANCELLED;
+    }
+
+    std::unique_ptr<float[]> noise(
+        new (std::nothrow) float[latentCount]
+    );
+    std::unique_ptr<float[]> modelPrediction(
+        new (std::nothrow) float[latentCount]
+    );
+    if (!noise || !modelPrediction) {
+        return NativeError::OUT_OF_MEMORY;
+    }
+
+    if (
+        !kira::pisa::fillGaussianNoise(
+            noise.get(),
+            latentCount,
+            noiseSeed
+        ) ||
+        !kira::pisa::sampleLatentFromMoments(
+            moments,
+            noise.get(),
+            decoderLatent,
+            1,
+            4,
+            latentHeight,
+            latentWidth,
+            VAE_SCALING_FACTOR
+        )
+    ) {
+        return NativeError::INFERENCE_FAILED;
+    }
+
+    if (!writeUnetConditioning(bundle)) {
+        return NativeError::INFERENCE_FAILED;
+    }
+    if (isCancellationRequested(bundle)) {
+        return NativeError::CANCELLED;
+    }
+
+    if (
+        kira::pisa::requiresTiling(
+            latentWidth,
+            latentHeight,
+            PISA_UNET_TILE_SIZE
+        )
+    ) {
+        UnetTileContext tileContext;
+        tileContext.bundle = &bundle;
+        if (
+            !kira::pisa::runTiledPlanarTransform(
+                decoderLatent,
+                4,
+                latentWidth,
+                latentHeight,
+                PISA_UNET_TILE_SIZE,
+                PISA_UNET_TILE_OVERLAP,
+                runUnetTileTransform,
+                &tileContext,
+                modelPrediction.get(),
+                latentCount
+            )
+        ) {
+            return tileContext.error == NativeError::NONE
+                ? NativeError::INFERENCE_FAILED
+                : tileContext.error;
+        }
+    } else {
+        MNN::Tensor* unetLatent =
+            bundle.unet->getSessionInput(
+                bundle.unetSession,
+                "latent"
+            );
+        if (
+            !kira::pisa::writeFloatNchwTensor(
+                unetLatent,
+                decoderLatent,
+                latentCount
+            )
+        ) {
+            return NativeError::INFERENCE_FAILED;
+        }
+
+        const MNN::ErrorCode unetRun =
+            bundle.unet->runSession(bundle.unetSession);
+        if (unetRun != MNN::NO_ERROR) {
+            return mapMnnRunError(unetRun);
+        }
+
+        const MNN::Tensor* unetOutput =
+            bundle.unet->getSessionOutput(
+                bundle.unetSession,
+                "model_pred"
+            );
+        if (
+            !kira::pisa::readFloatNchwTensor(
+                unetOutput,
+                modelPrediction.get(),
+                latentCount
+            )
+        ) {
+            return NativeError::INFERENCE_FAILED;
+        }
+    }
+
+    completedStages = 2;
+    if (isCancellationRequested(bundle)) {
+        return NativeError::CANCELLED;
+    }
+
+    if (
+        !kira::pisa::buildDecoderLatent(
+            decoderLatent,
+            modelPrediction.get(),
+            decoderLatent,
+            latentCount,
+            VAE_SCALING_FACTOR
+        )
+    ) {
+        return NativeError::INFERENCE_FAILED;
+    }
+
+    return NativeError::NONE;
+}
+
 NativeError runPisaPreparedGraph(
     PisaModelBundle& bundle,
     int latentWidth,
@@ -907,21 +1053,10 @@ NativeError runPisaPreparedGraph(
     std::unique_ptr<float[]> moments(
         new (std::nothrow) float[momentsCount]
     );
-    std::unique_ptr<float[]> noise(
+    std::unique_ptr<float[]> decoderLatent(
         new (std::nothrow) float[latentCount]
     );
-    std::unique_ptr<float[]> controlLatent(
-        new (std::nothrow) float[latentCount]
-    );
-    std::unique_ptr<float[]> modelPrediction(
-        new (std::nothrow) float[latentCount]
-    );
-    if (
-        !moments ||
-        !noise ||
-        !controlLatent ||
-        !modelPrediction
-    ) {
+    if (!moments || !decoderLatent) {
         return NativeError::OUT_OF_MEMORY;
     }
 
@@ -945,112 +1080,23 @@ NativeError runPisaPreparedGraph(
             encoderOutput,
             moments.get(),
             momentsCount
-        ) ||
-        !kira::pisa::fillGaussianNoise(
-            noise.get(),
-            latentCount,
-            noiseSeed
-        ) ||
-        !kira::pisa::sampleLatentFromMoments(
-            moments.get(),
-            noise.get(),
-            controlLatent.get(),
-            1,
-            4,
-            latentHeight,
-            latentWidth,
-            VAE_SCALING_FACTOR
         )
     ) {
         return NativeError::INFERENCE_FAILED;
     }
 
-    if (!writeUnetConditioning(bundle)) {
-        return NativeError::INFERENCE_FAILED;
-    }
-    if (isCancellationRequested(bundle)) {
-        return NativeError::CANCELLED;
-    }
-
-    if (
-        kira::pisa::requiresTiling(
-            latentWidth,
-            latentHeight,
-            PISA_UNET_TILE_SIZE
-        )
-    ) {
-        UnetTileContext tileContext;
-        tileContext.bundle = &bundle;
-        if (
-            !kira::pisa::runTiledPlanarTransform(
-                controlLatent.get(),
-                4,
-                latentWidth,
-                latentHeight,
-                PISA_UNET_TILE_SIZE,
-                PISA_UNET_TILE_OVERLAP,
-                runUnetTileTransform,
-                &tileContext,
-                modelPrediction.get(),
-                latentCount
-            )
-        ) {
-            return tileContext.error == NativeError::NONE
-                ? NativeError::INFERENCE_FAILED
-                : tileContext.error;
-        }
-    } else {
-        MNN::Tensor* unetLatent =
-            bundle.unet->getSessionInput(
-                bundle.unetSession,
-                "latent"
-            );
-        if (
-            !kira::pisa::writeFloatNchwTensor(
-                unetLatent,
-                controlLatent.get(),
-                latentCount
-            )
-        ) {
-            return NativeError::INFERENCE_FAILED;
-        }
-
-        const MNN::ErrorCode unetRun =
-            bundle.unet->runSession(bundle.unetSession);
-        if (unetRun != MNN::NO_ERROR) {
-            return mapMnnRunError(unetRun);
-        }
-
-        const MNN::Tensor* unetOutput =
-            bundle.unet->getSessionOutput(
-                bundle.unetSession,
-                "model_pred"
-            );
-        if (
-            !kira::pisa::readFloatNchwTensor(
-                unetOutput,
-                modelPrediction.get(),
-                latentCount
-            )
-        ) {
-            return NativeError::INFERENCE_FAILED;
-        }
-    }
-    completedStages = 2;
-    if (isCancellationRequested(bundle)) {
-        return NativeError::CANCELLED;
-    }
-
-    if (
-        !kira::pisa::buildDecoderLatent(
-            controlLatent.get(),
-            modelPrediction.get(),
-            controlLatent.get(),
-            latentCount,
-            VAE_SCALING_FACTOR
-        )
-    ) {
-        return NativeError::INFERENCE_FAILED;
+    const NativeError latentResult = runPisaLatentPipeline(
+        bundle,
+        moments.get(),
+        latentWidth,
+        latentHeight,
+        noiseSeed,
+        decoderLatent.get(),
+        latentCount,
+        completedStages
+    );
+    if (latentResult != NativeError::NONE) {
+        return latentResult;
     }
 
     MNN::Tensor* decoderInput =
@@ -1061,7 +1107,7 @@ NativeError runPisaPreparedGraph(
     if (
         !kira::pisa::writeFloatNchwTensor(
             decoderInput,
-            controlLatent.get(),
+            decoderLatent.get(),
             latentCount
         )
     ) {

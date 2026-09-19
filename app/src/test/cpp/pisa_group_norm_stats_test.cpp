@@ -202,6 +202,71 @@ void testNormalizesTilesUsingOneSharedDistribution() {
     );
 }
 
+void testNormalizesTilesInPlaceAfterCollectingSharedStats() {
+    std::vector<float> first = {1.0f, 3.0f};
+    std::vector<float> second = {5.0f, 7.0f};
+    const float weight[] = {2.0f, 2.0f};
+    const float bias[] = {1.0f, 1.0f};
+
+    const std::vector<kira::pisa::GroupNormTileBuffer> tiles = {
+        {
+            first.data(),
+            first.data(),
+            1,
+            2,
+            1,
+            1,
+            first.size(),
+        },
+        {
+            second.data(),
+            second.data(),
+            1,
+            2,
+            1,
+            1,
+            second.size(),
+        },
+    };
+
+    expectTrue(
+        kira::pisa::normalizeGroupNormTiles(
+            tiles,
+            1,
+            weight,
+            bias,
+            1.0e-6f
+        ),
+        "in-place shared tile group norm succeeds"
+    );
+
+    const float denominator = std::sqrt(1.0f + 1.0e-6f);
+    expectNear(
+        first[0],
+        ((1.0f - 4.0f) / denominator) * 2.0f + 1.0f,
+        2.0e-6f,
+        "in-place first tile channel zero"
+    );
+    expectNear(
+        first[1],
+        ((3.0f - 4.0f) / denominator) * 2.0f + 1.0f,
+        2.0e-6f,
+        "in-place first tile channel one"
+    );
+    expectNear(
+        second[0],
+        ((5.0f - 4.0f) / denominator) * 2.0f + 1.0f,
+        2.0e-6f,
+        "in-place second tile channel zero"
+    );
+    expectNear(
+        second[1],
+        ((7.0f - 4.0f) / denominator) * 2.0f + 1.0f,
+        2.0e-6f,
+        "in-place second tile channel one"
+    );
+}
+
 void testRejectsInvalidContracts() {
     const float input[] = {1.0f, 2.0f, 3.0f};
     kira::pisa::GroupNormTileStats stats;
@@ -238,6 +303,7 @@ int main() {
     testSummarizesTilesUsingUpstreamPixelWeights();
     testAppliesSharedStatsAndAffineTransform();
     testNormalizesTilesUsingOneSharedDistribution();
+    testNormalizesTilesInPlaceAfterCollectingSharedStats();
     testRejectsInvalidContracts();
 
     if (failures != 0) {

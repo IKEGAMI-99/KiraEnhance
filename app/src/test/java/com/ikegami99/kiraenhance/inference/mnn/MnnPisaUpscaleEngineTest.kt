@@ -305,13 +305,13 @@ class MnnPisaUpscaleEngineTest {
     }
 
     @Test
-    fun `odd sized PiSA input keeps exact four-x app output`() {
+    fun `odd sized PiSA input keeps upstream aligned output`() {
         val native = FakeMnnPisaNativeApi(
             inferenceResult = MnnPisaNativeInferenceResult(
                 errorCode = MnnPisaNativeError.NONE,
-                outputWidth = 516,
+                outputWidth = 512,
                 outputHeight = 512,
-                outputRowStrideBytes = 2064,
+                outputRowStrideBytes = 2048,
                 gpuUsed = true,
             ),
         )
@@ -331,9 +331,9 @@ class MnnPisaUpscaleEngineTest {
 
         assertTrue(result is UpscaleResult.Success)
         val success = result as UpscaleResult.Success
-        assertEquals(516, success.output.width)
+        assertEquals(512, success.output.width)
         assertEquals(512, success.output.height)
-        assertEquals(2064, success.output.rowStrideBytes)
+        assertEquals(2048, success.output.rowStrideBytes)
         assertEquals(1, native.inferCalls)
     }
 

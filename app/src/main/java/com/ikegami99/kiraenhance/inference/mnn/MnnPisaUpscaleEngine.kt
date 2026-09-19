@@ -179,6 +179,23 @@ class MnnPisaUpscaleEngine(
 
         val outputWidth = outputWidthLong.toInt()
         val outputHeight = outputHeightLong.toInt()
+        val minimumPreUpscale = PROCESS_SIZE / settings.outputScale
+        val smallInputBoosted =
+            input.width < minimumPreUpscale || input.height < minimumPreUpscale
+        val expectedNativeWidth = if (smallInputBoosted) {
+            outputWidth
+        } else {
+            outputWidth - outputWidth % MODEL_MULTIPLE
+        }
+        val expectedNativeHeight = if (smallInputBoosted) {
+            outputHeight
+        } else {
+            outputHeight - outputHeight % MODEL_MULTIPLE
+        }
+        if (expectedNativeWidth <= 0 || expectedNativeHeight <= 0) {
+            return failed(EngineErrorCode.INVALID_INPUT, "PiSA-SR aligned output dimensions are invalid")
+        }
+
         val rowStrideLong = outputWidthLong * BYTES_PER_PIXEL
         if (
             rowStrideLong > Int.MAX_VALUE ||
@@ -223,7 +240,8 @@ class MnnPisaUpscaleEngine(
         if (
             nativeWidth <= 0 || nativeHeight <= 0 ||
             nativeStride < nativeWidth * BYTES_PER_PIXEL ||
-            nativeWidth != outputWidth || nativeHeight != outputHeight
+            nativeWidth != expectedNativeWidth ||
+            nativeHeight != expectedNativeHeight
         ) {
             return failed(EngineErrorCode.INFERENCE_FAILED, "MNN PiSA-SR returned invalid output dimensions")
         }
@@ -318,6 +336,8 @@ class MnnPisaUpscaleEngine(
     private companion object {
         const val MODEL_ID = "pisa-sr"
         const val NATIVE_SCALE = 4
+        const val PROCESS_SIZE = 512
+        const val MODEL_MULTIPLE = 8
         const val BYTES_PER_PIXEL = 4
         const val MAX_MONOLITHIC_OUTPUT_PIXELS = 1024L * 1024L
     }

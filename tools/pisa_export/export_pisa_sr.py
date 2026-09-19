@@ -12,6 +12,7 @@ from export_contract import (
     build_mnnconvert_command,
     write_export_manifest,
 )
+from vae_tile_contract import build_vae_tile_barrier_contract
 
 
 PIXEL_ADAPTERS = (
@@ -672,6 +673,17 @@ def run(args: argparse.Namespace) -> pathlib.Path:
         onnx_paths=export["onnxPaths"],
     )
 
+    vae_tile_barrier_contract = build_vae_tile_barrier_contract(vae)
+    if (
+        vae_tile_barrier_contract["encoderBarrierCount"] != 22 or
+        vae_tile_barrier_contract["decoderBarrierCount"] != 30
+    ):
+        raise RuntimeError(
+            "Unexpected SD2.1 VAE GroupNorm barrier contract: "
+            f"encoder={vae_tile_barrier_contract['encoderBarrierCount']} "
+            f"decoder={vae_tile_barrier_contract['decoderBarrierCount']}"
+        )
+
     artifact_paths = [
         mnn_paths[0],
         mnn_paths[1],
@@ -699,6 +711,7 @@ def run(args: argparse.Namespace) -> pathlib.Path:
             "onnxExportPrecision": export_precision,
             "pisaRepoPath": str(args.pisa_repo.resolve()),
             "pisaRepoCommit": _git_commit(args.pisa_repo),
+            "vaeTileBarrierContract": vae_tile_barrier_contract,
         },
         artifact_paths=artifact_paths,
     )

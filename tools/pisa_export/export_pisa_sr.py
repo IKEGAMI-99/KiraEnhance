@@ -19,6 +19,7 @@ from vae_tile_contract import (
     build_vae_tile_barrier_contract,
     build_vae_tile_execution_contract,
     build_vae_tile_segment_contract,
+    resolve_vae_module_path,
     validate_vae_tile_execution_contract,
 )
 
@@ -507,6 +508,104 @@ def _make_vae_segment_wrapper(
             return result.activation
 
     return VaeSegment(vae).eval()
+
+
+def _vae_segment_onnx_spec(
+    side_name: str,
+    segment: dict[str, Any],
+) -> dict[str, Any]:
+    if side_name not in ("encoder", "decoder"):
+        raise ValueError(f"unsupported VAE segment side {side_name!r}")
+
+    index = segment.get("index")
+    if not isinstance(index, int) or index < 0:
+        raise ValueError("VAE segment index is invalid")
+
+    requires_residual = bool(segment.get("requiresResidualInput"))
+    produces_residual = bool(segment.get("producesResidualOutput"))
+    stem = f"vae_{side_name}_segment_{index:02d}"
+    input_names = ["activation"]
+    if requires_residual:
+        input_names.append("residual")
+    output_names = ["activation_out"]
+    if produces_residual:
+        output_names.append("residual_out")
+
+    dynamic_axes = {
+        name: {
+            2: f"{stem}_height",
+            3: f"{stem}_width",
+        }
+        for name in input_names + output_names
+    }
+    return {
+        "fileName": f"{stem}.onnx",
+        "inputNames": input_names,
+        "outputNames": output_names,
+        "dynamicAxes": dynamic_axes,
+    }
+
+
+def _collect_vae_segment_examples(
+    torch: Any,
+    vae: Any,
+    side_contract: dict[str, Any],
+    activation: Any,
+) -> tuple[list[dict[str, Any]], Any]:
+    segments = side_contract.get("segments")
+    if not isinstance(segments, list) or not segments:
+        raise ValueError("VAE segment side has no segments")
+
+    current = activation
+    residual = None
+    examples: list[dict[str, Any]] = []
+
+    for expected_index, segment in enumerate(segments):
+        if segment.get("index") != expected_index:
+            raise ValueError("VAE segment indices are not contiguous")
+
+        entry_barrier = segment.get("entryBarrier")
+        if entry_barrier is not None:
+            if not isinstance(entry_barrier, str):
+                raise ValueError("VAE segment entry barrier is invalid")
+            norm = resolve_vae_module_path(vae, entry_barrier)
+            current = norm(current)
+
+        requires_residual = bool(segment.get("requiresResidualInput"))
+        args = (
+            (current, residual)
+            if requires_residual
+            else (current,)
+        )
+        if requires_residual and residual is None:
+            raise ValueError("VAE segment example requires residual input")
+
+        wrapper = _make_vae_segment_wrapper(
+            torch,
+            vae,
+            segment,
+        )
+        result = wrapper(*args)
+        examples.append(
+            {
+                "segment": segment,
+                "args": args,
+            }
+        )
+
+        if bool(segment.get("producesResidualOutput")):
+            if not isinstance(result, tuple) or len(result) != 2:
+                raise ValueError(
+                    "VAE segment example did not produce activation and residual"
+                )
+            current, residual = result
+        else:
+            current = result
+            residual = None
+
+    if residual is not None:
+        raise ValueError("VAE segment examples finished with live residual")
+    return examples, current
 
 
 def _make_unet_wrapper(torch: Any, unet: Any):

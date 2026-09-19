@@ -156,6 +156,95 @@ class ExportWrapperTest(unittest.TestCase):
             wrapper("activation", "residual"),
         )
 
+    def test_vae_segment_onnx_spec_tracks_residual_io(self):
+        spec = export_pisa_sr._vae_segment_onnx_spec(
+            "encoder",
+            {
+                "index": 3,
+                "requiresResidualInput": True,
+                "producesResidualOutput": True,
+            },
+        )
+
+        self.assertEqual("vae_encoder_segment_03.onnx", spec["fileName"])
+        self.assertEqual(
+            ["activation", "residual"],
+            spec["inputNames"],
+        )
+        self.assertEqual(
+            ["activation_out", "residual_out"],
+            spec["outputNames"],
+        )
+        self.assertEqual(
+            {2: "vae_encoder_segment_03_height", 3: "vae_encoder_segment_03_width"},
+            spec["dynamicAxes"]["activation"],
+        )
+
+    def test_collects_segment_examples_across_external_norm(self):
+        events = []
+        vae = types.SimpleNamespace(
+            encoder=types.SimpleNamespace(
+                conv_in=UnaryOp("conv_in", events),
+                norm=UnaryOp("norm", events),
+            )
+        )
+        side_contract = {
+            "segments": [
+                {
+                    "index": 0,
+                    "entryBarrier": None,
+                    "requiresResidualInput": False,
+                    "producesResidualOutput": True,
+                    "operations": [
+                        {
+                            "kind": "module",
+                            "modulePath": "encoder.conv_in",
+                            "residualKey": None,
+                            "shortcut": None,
+                        },
+                        {
+                            "kind": "store_residual",
+                            "modulePath": None,
+                            "residualKey": "r0",
+                            "shortcut": "identity",
+                        },
+                    ],
+                },
+                {
+                    "index": 1,
+                    "entryBarrier": "encoder.norm",
+                    "requiresResidualInput": True,
+                    "producesResidualOutput": False,
+                    "operations": [
+                        {
+                            "kind": "add_residual",
+                            "modulePath": None,
+                            "residualKey": "r0",
+                            "shortcut": None,
+                        }
+                    ],
+                },
+            ]
+        }
+
+        examples, result = export_pisa_sr._collect_vae_segment_examples(
+            FakeTorch,
+            vae,
+            side_contract,
+            "image",
+        )
+
+        self.assertEqual(2, len(examples))
+        self.assertEqual(("image",), examples[0]["args"])
+        self.assertEqual(
+            ("norm(conv_in(image))", "conv_in(image)"),
+            examples[1]["args"],
+        )
+        self.assertEqual(
+            "norm(conv_in(image))conv_in(image)",
+            result,
+        )
+
     def test_default_unet_forwards_all_three_inputs_and_returns_sample(self):
         unet = FakeUnet()
         wrapper = export_pisa_sr._make_unet_wrapper(FakeTorch, unet)

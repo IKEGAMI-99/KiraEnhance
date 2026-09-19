@@ -17,7 +17,12 @@ class FakeModule:
 
 
 class FakeTorch:
-    nn = types.SimpleNamespace(Module=FakeModule)
+    nn = types.SimpleNamespace(
+        Module=FakeModule,
+        functional=types.SimpleNamespace(
+            silu=lambda value: value,
+        ),
+    )
 
 
 class UnaryOp:

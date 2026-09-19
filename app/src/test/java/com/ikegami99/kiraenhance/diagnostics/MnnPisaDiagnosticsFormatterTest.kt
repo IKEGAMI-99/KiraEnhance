@@ -3,6 +3,8 @@ package com.ikegami99.kiraenhance.diagnostics
 import com.ikegami99.kiraenhance.inference.mnn.MnnPisaBackend
 import com.ikegami99.kiraenhance.inference.mnn.MnnPisaDiagnosticsSnapshot
 import com.ikegami99.kiraenhance.inference.mnn.MnnPisaGraph
+import com.ikegami99.kiraenhance.inference.mnn.MnnPisaInferenceDiagnostics
+import com.ikegami99.kiraenhance.inference.mnn.MnnPisaNativeError
 import com.ikegami99.kiraenhance.inference.mnn.MnnPisaSessionInfo
 import com.ikegami99.kiraenhance.inference.mnn.MnnPisaTensorInfo
 import com.ikegami99.kiraenhance.inference.mnn.MnnTensorRole
@@ -49,6 +51,36 @@ class MnnPisaDiagnosticsFormatterTest {
                 "graph=unet role=input name=timestep shape=scalar type=0/64/1 dim=0",
             ),
             MnnPisaDiagnosticsFormatter.format(snapshot),
+        )
+    }
+
+    @Test
+    fun `formats inference validation metadata deterministically`() {
+        val diagnostic = MnnPisaInferenceDiagnostics(
+            sourceWidth = 64,
+            sourceHeight = 96,
+            preUpscaleWidth = 128,
+            preUpscaleHeight = 192,
+            rawModelWidth = 512,
+            rawModelHeight = 768,
+            modelWidth = 512,
+            modelHeight = 768,
+            outputWidth = 256,
+            outputHeight = 384,
+            smallInputBoosted = true,
+            noiseSeed = 42L,
+            backend = MnnPisaBackend.OPENCL,
+            nativeError = MnnPisaNativeError.NONE,
+            nativeOutputWidth = 256,
+            nativeOutputHeight = 384,
+            gpuUsed = true,
+        )
+
+        assertEquals(
+            "source=64x96 pre=128x192 rawModel=512x768 model=512x768 " +
+                "output=256x384 boosted=true seed=42 backend=opencl " +
+                "nativeError=none nativeOutput=256x384 gpu=true",
+            MnnPisaDiagnosticsFormatter.formatInference(diagnostic),
         )
     }
 

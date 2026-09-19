@@ -33,6 +33,15 @@ bool buildTilePlan(
     TilePlan& output
 );
 
+bool scaleTileRegionExact(
+    const TileRegion& input,
+    int numerator,
+    int denominator,
+    int outputWidth,
+    int outputHeight,
+    TileRegion& output
+);
+
 bool buildGaussianTileWeights(
     int tileWidth,
     int tileHeight,

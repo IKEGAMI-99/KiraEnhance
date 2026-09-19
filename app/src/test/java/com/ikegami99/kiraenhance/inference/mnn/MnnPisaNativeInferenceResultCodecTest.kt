@@ -13,6 +13,7 @@ class MnnPisaNativeInferenceResultCodecTest {
                 1024L,
                 8192L,
                 1L,
+                123_456_789L,
             ),
         )
 
@@ -21,6 +22,7 @@ class MnnPisaNativeInferenceResultCodecTest {
         assertEquals(1024, result.outputHeight)
         assertEquals(8192, result.outputRowStrideBytes)
         assertEquals(true, result.gpuUsed)
+        assertEquals(123_456_789L, result.segmentedVaePeakTrackedBytes)
     }
 
     @Test
@@ -28,6 +30,7 @@ class MnnPisaNativeInferenceResultCodecTest {
         val result = MnnPisaNativeInferenceResultCodec.decode(
             longArrayOf(
                 MnnPisaNativeError.NOT_IMPLEMENTED.ordinal.toLong(),
+                0L,
                 0L,
                 0L,
                 0L,
@@ -49,9 +52,26 @@ class MnnPisaNativeInferenceResultCodecTest {
                 512L,
                 1024L,
                 0L,
+                0L,
             ),
         )
 
         assertEquals(MnnPisaNativeError.INTERNAL, result.errorCode)
     }
+    @Test
+    fun `rejects negative segmented VAE peak bytes`() {
+        val result = MnnPisaNativeInferenceResultCodec.decode(
+            longArrayOf(
+                MnnPisaNativeError.NONE.ordinal.toLong(),
+                512L,
+                512L,
+                2048L,
+                0L,
+                -1L,
+            ),
+        )
+
+        assertEquals(MnnPisaNativeError.INTERNAL, result.errorCode)
+    }
+
 }

@@ -7,6 +7,8 @@ import subprocess
 import sys
 from typing import Any
 
+from vae_segment_runtime import run_segment_operations
+
 from export_contract import (
     ARTIFACT_NAMES,
     build_mnnconvert_command,
@@ -400,6 +402,111 @@ def _make_vae_decoder_wrapper(torch: Any, vae: Any):
             return self.decoder(latent)
 
     return VaeDecoder(vae).eval()
+
+
+def _vae_attention_without_group_norm(
+    torch: Any,
+    module: Any,
+    hidden_states: Any,
+):
+    batch_size, channel, height, width = hidden_states.shape
+    hidden_states = hidden_states.view(
+        batch_size,
+        channel,
+        height * width,
+    ).transpose(1, 2)
+
+    sequence_length = hidden_states.shape[1]
+    attention_mask = module.prepare_attention_mask(
+        None,
+        sequence_length,
+        batch_size,
+    )
+
+    query = module.to_q(hidden_states)
+    key = module.to_k(hidden_states)
+    value = module.to_v(hidden_states)
+
+    query = module.head_to_batch_dim(query)
+    key = module.head_to_batch_dim(key)
+    value = module.head_to_batch_dim(value)
+
+    attention_probs = module.get_attention_scores(
+        query,
+        key,
+        attention_mask,
+    )
+    hidden_states = torch.bmm(attention_probs, value)
+    hidden_states = module.batch_to_head_dim(hidden_states)
+    hidden_states = module.to_out[0](hidden_states)
+    hidden_states = module.to_out[1](hidden_states)
+
+    return hidden_states.transpose(-1, -2).reshape(
+        batch_size,
+        channel,
+        height,
+        width,
+    )
+
+
+def _make_vae_segment_wrapper(
+    torch: Any,
+    vae: Any,
+    segment: dict[str, Any],
+    *,
+    silu: Any | None = None,
+    attention: Any | None = None,
+):
+    operations = segment.get("operations")
+    if not isinstance(operations, list):
+        raise ValueError("VAE segment operations are missing")
+
+    requires_residual = bool(segment.get("requiresResidualInput"))
+    produces_residual = bool(segment.get("producesResidualOutput"))
+    silu_fn = silu
+    if silu_fn is None:
+        silu_fn = torch.nn.functional.silu
+    attention_fn = attention
+    if attention_fn is None:
+        attention_fn = lambda module, value: _vae_attention_without_group_norm(
+            torch,
+            module,
+            value,
+        )
+
+    class VaeSegment(torch.nn.Module):
+        def __init__(self, model):
+            super().__init__()
+            self.vae = model
+
+        def forward(self, activation, residual=None):
+            if requires_residual and residual is None:
+                raise ValueError("VAE segment requires residual input")
+            if not requires_residual and residual is not None:
+                raise ValueError("VAE segment does not accept residual input")
+
+            result = run_segment_operations(
+                self.vae,
+                operations,
+                activation,
+                residual,
+                silu=silu_fn,
+                attention=attention_fn,
+            )
+            if produces_residual:
+                if result.residual is None:
+                    raise ValueError(
+                        "VAE segment promised residual output but produced none"
+                    )
+                return result.activation, result.residual
+
+            if result.residual is not None:
+                raise ValueError(
+                    "VAE segment produced an unexpected live residual"
+                )
+            return result.activation
+
+    return VaeSegment(vae).eval()
 
 
 def _make_unet_wrapper(torch: Any, unet: Any):

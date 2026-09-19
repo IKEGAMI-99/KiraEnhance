@@ -87,6 +87,68 @@ class ExportWrapperTest(unittest.TestCase):
             events,
         )
 
+    def test_vae_segment_wrapper_respects_residual_contract(self):
+        events = []
+        vae = types.SimpleNamespace(
+            encoder=types.SimpleNamespace(
+                conv_in=UnaryOp("conv_in", events),
+            )
+        )
+        segment = {
+            "requiresResidualInput": False,
+            "producesResidualOutput": True,
+            "operations": [
+                {
+                    "kind": "module",
+                    "modulePath": "encoder.conv_in",
+                    "residualKey": None,
+                    "shortcut": None,
+                },
+                {
+                    "kind": "store_residual",
+                    "modulePath": None,
+                    "residualKey": "r0",
+                    "shortcut": "identity",
+                },
+            ],
+        }
+
+        wrapper = export_pisa_sr._make_vae_segment_wrapper(
+            FakeTorch,
+            vae,
+            segment,
+            silu=lambda value: value,
+            attention=lambda module, value: module(value),
+        )
+        activation, residual = wrapper("image")
+
+        self.assertEqual("conv_in(image)", activation)
+        self.assertEqual("conv_in(image)", residual)
+        self.assertEqual([("conv_in", "image")], events)
+
+    def test_vae_segment_wrapper_requires_declared_residual(self):
+        vae = types.SimpleNamespace()
+        segment = {
+            "requiresResidualInput": True,
+            "producesResidualOutput": False,
+            "operations": [],
+        }
+        wrapper = export_pisa_sr._make_vae_segment_wrapper(
+            FakeTorch,
+            vae,
+            segment,
+            silu=lambda value: value,
+            attention=lambda module, value: value,
+        )
+
+        with self.assertRaisesRegex(ValueError, "requires residual"):
+            wrapper("activation")
+
+        self.assertEqual(
+            "activation",
+            wrapper("activation", "residual"),
+        )
+
     def test_default_unet_forwards_all_three_inputs_and_returns_sample(self):
         unet = FakeUnet()
         wrapper = export_pisa_sr._make_unet_wrapper(FakeTorch, unet)

@@ -554,6 +554,7 @@ bool runMnnSegmentedVae(
                 success = false;
                 break;
             }
+            recordPeak(metrics, beforeBytes);
 
             if (
                 cancelled(cancelProbe, cancelContext) ||
@@ -567,22 +568,14 @@ bool runMnnSegmentedVae(
                 break;
             }
 
-            std::size_t nextTileBytes = 0;
-            std::size_t temporaryPeak = 0;
             std::size_t afterBytes = 0;
-            if (
-                !tileStateBytes(state, nextTileBytes) ||
-                !checkedAdd(
-                    beforeBytes,
-                    nextTileBytes,
-                    temporaryPeak
-                ) ||
-                !trackedStateBytes(states, afterBytes)
-            ) {
+            if (!trackedStateBytes(states, afterBytes)) {
                 success = false;
                 break;
             }
-            recordPeak(metrics, temporaryPeak);
+            // runSegmentForTile now reuses each tile's vectors in place, so
+            // the old implementation's before + next-tile estimate would
+            // double-count storage that no longer exists concurrently.
             recordPeak(metrics, afterBytes);
         }
         interpreter->releaseSession(session);

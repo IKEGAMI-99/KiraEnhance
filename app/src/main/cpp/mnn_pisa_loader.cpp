@@ -1736,6 +1736,24 @@ Java_com_ikegami99_kiraenhance_inference_mnn_MnnPisaNativeBridge_nativeInfer(
         );
     }
 
+    // Upstream converts the decoder tensor to PIL before AdaIN,
+    // which truncates float RGB values onto the uint8 grid.
+    if (
+        !kira::pisa::quantizeUnitPlanarLikeTorchvision(
+            decodedImage.get(),
+            imageCount
+        )
+    ) {
+        return makeInferenceResult(
+            env,
+            NativeError::INFERENCE_FAILED,
+            0,
+            0,
+            0,
+            isGpuBackend(bundle->backend)
+        );
+    }
+
     if (isCancellationRequested(*bundle)) {
         return makeInferenceResult(
             env,
@@ -1764,11 +1782,6 @@ Java_com_ikegami99_kiraenhance_inference_mnn_MnnPisaNativeBridge_nativeInfer(
             0,
             isGpuBackend(bundle->backend)
         );
-    }
-
-    for (std::size_t index = 0; index < imageCount; ++index) {
-        decodedImage[index] =
-            decodedImage[index] * 2.0f - 1.0f;
     }
 
     if (isCancellationRequested(*bundle)) {
@@ -1803,7 +1816,7 @@ Java_com_ikegami99_kiraenhance_inference_mnn_MnnPisaNativeBridge_nativeInfer(
         resizePlan.modelHeight != resizePlan.outputHeight;
     if (needsOutputResize) {
         if (
-            !kira::pisa::normalizedNchwToRgba8888(
+            !kira::pisa::unitNchwToRgba8888LikeTorchvision(
                 decodedImage.get(),
                 resizePlan.modelWidth,
                 resizePlan.modelHeight,
@@ -1859,7 +1872,7 @@ Java_com_ikegami99_kiraenhance_inference_mnn_MnnPisaNativeBridge_nativeInfer(
             );
         }
     } else if (
-        !kira::pisa::normalizedNchwToRgba8888(
+        !kira::pisa::unitNchwToRgba8888LikeTorchvision(
             decodedImage.get(),
             resizePlan.modelWidth,
             resizePlan.modelHeight,

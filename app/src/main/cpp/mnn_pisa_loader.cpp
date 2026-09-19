@@ -259,6 +259,8 @@ struct PisaModelBundle {
     InterpreterPtr unet;
     InterpreterPtr vaeDecoder;
     kira::pisa::VaeSegmentPack vaeSegmentPack;
+    std::vector<InterpreterPtr> vaeEncoderSegments;
+    std::vector<InterpreterPtr> vaeDecoderSegments;
     std::unique_ptr<std::uint8_t[]> emptyPrompt;
     std::size_t emptyPromptBytes = 0;
     MNN::Session* vaeEncoderSession = nullptr;
@@ -270,6 +272,33 @@ struct PisaModelBundle {
 
 InterpreterPtr loadInterpreter(const std::string& path) {
     return InterpreterPtr(MNN::Interpreter::createFromFile(path.c_str()));
+}
+
+bool loadSegmentInterpreters(
+    const std::vector<std::vector<std::uint8_t>>& models,
+    std::vector<InterpreterPtr>& output
+) {
+    output.clear();
+    output.reserve(models.size());
+    for (const auto& model : models) {
+        if (model.empty()) {
+            output.clear();
+            return false;
+        }
+        InterpreterPtr interpreter(
+            MNN::Interpreter::createFromBuffer(
+                model.data(),
+                model.size()
+            )
+        );
+        if (!interpreter) {
+            output.clear();
+            return false;
+        }
+        interpreter->setSessionMode(MNN::Interpreter::Session_Release);
+        output.push_back(std::move(interpreter));
+    }
+    return true;
 }
 
 void releaseSession(
@@ -1228,6 +1257,19 @@ Java_com_ikegami99_kiraenhance_inference_mnn_MnnPisaNativeBridge_nativeLoadModel
             PISA_VAE_ENCODER_SEGMENTS ||
         bundle->vaeSegmentPack.decoderAffine.size() + 1 !=
             PISA_VAE_DECODER_SEGMENTS
+    ) {
+        return makeLoadResult(env, 0L, NativeError::LOAD_FAILED, false);
+    }
+
+    if (
+        !loadSegmentInterpreters(
+            bundle->vaeSegmentPack.encoderModels,
+            bundle->vaeEncoderSegments
+        ) ||
+        !loadSegmentInterpreters(
+            bundle->vaeSegmentPack.decoderModels,
+            bundle->vaeDecoderSegments
+        )
     ) {
         return makeLoadResult(env, 0L, NativeError::LOAD_FAILED, false);
     }

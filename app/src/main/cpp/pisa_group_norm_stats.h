@@ -13,6 +13,16 @@ struct GroupNormTileStats {
     std::vector<float> variances;
 };
 
+struct GroupNormTileBuffer {
+    const float* input = nullptr;
+    float* output = nullptr;
+    int batch = 0;
+    int channels = 0;
+    int height = 0;
+    int width = 0;
+    std::size_t outputCount = 0;
+};
+
 bool computeGroupNormTileStats(
     const float* input,
     int batch,
@@ -43,6 +53,14 @@ bool applyGroupNormWithStats(
     float epsilon,
     float* output,
     std::size_t outputCount
+);
+
+bool normalizeGroupNormTiles(
+    const std::vector<GroupNormTileBuffer>& tiles,
+    int groups,
+    const float* weight,
+    const float* bias,
+    float epsilon
 );
 
 }  // namespace kira::pisa

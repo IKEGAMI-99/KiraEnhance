@@ -379,4 +379,81 @@ bool applyGroupNormWithStats(
     return true;
 }
 
+bool normalizeGroupNormTiles(
+    const std::vector<GroupNormTileBuffer>& tiles,
+    int groups,
+    const float* weight,
+    const float* bias,
+    float epsilon
+) {
+    if (tiles.empty() || groups <= 0) {
+        return false;
+    }
+
+    const int batch = tiles.front().batch;
+    const int channels = tiles.front().channels;
+    if (
+        batch <= 0 ||
+        channels <= 0 ||
+        channels % groups != 0
+    ) {
+        return false;
+    }
+
+    std::vector<GroupNormTileStats> stats;
+    stats.reserve(tiles.size());
+    for (const auto& tile : tiles) {
+        if (
+            tile.input == nullptr ||
+            tile.output == nullptr ||
+            tile.batch != batch ||
+            tile.channels != channels
+        ) {
+            return false;
+        }
+
+        GroupNormTileStats tileStats;
+        if (!computeGroupNormTileStats(
+            tile.input,
+            tile.batch,
+            tile.channels,
+            tile.height,
+            tile.width,
+            groups,
+            tileStats
+        )) {
+            return false;
+        }
+        stats.push_back(std::move(tileStats));
+    }
+
+    std::vector<float> means;
+    std::vector<float> variances;
+    if (!summarizeGroupNormTileStats(stats, means, variances)) {
+        return false;
+    }
+
+    for (const auto& tile : tiles) {
+        if (!applyGroupNormWithStats(
+            tile.input,
+            tile.batch,
+            tile.channels,
+            tile.height,
+            tile.width,
+            groups,
+            means.data(),
+            variances.data(),
+            weight,
+            bias,
+            epsilon,
+            tile.output,
+            tile.outputCount
+        )) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
 }  // namespace kira::pisa

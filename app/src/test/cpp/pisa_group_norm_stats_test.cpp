@@ -151,6 +151,57 @@ void testAppliesSharedStatsAndAffineTransform() {
     expectNear(output[3], -0.5f, 2.0e-6f, "channel three");
 }
 
+void testNormalizesTilesUsingOneSharedDistribution() {
+    const float first[] = {1.0f, 3.0f};
+    const float second[] = {5.0f, 7.0f};
+    float firstOutput[2] = {};
+    float secondOutput[2] = {};
+    const float weight[] = {2.0f, 2.0f};
+    const float bias[] = {1.0f, 1.0f};
+
+    const std::vector<kira::pisa::GroupNormTileBuffer> tiles = {
+        {first, firstOutput, 1, 2, 1, 1, 2},
+        {second, secondOutput, 1, 2, 1, 1, 2},
+    };
+
+    expectTrue(
+        kira::pisa::normalizeGroupNormTiles(
+            tiles,
+            1,
+            weight,
+            bias,
+            1.0e-6f
+        ),
+        "shared tile group norm succeeds"
+    );
+
+    const float denominator = std::sqrt(5.0f + 1.0e-6f);
+    expectNear(
+        firstOutput[0],
+        ((1.0f - 4.0f) / denominator) * 2.0f + 1.0f,
+        2.0e-6f,
+        "shared norm first tile channel zero"
+    );
+    expectNear(
+        firstOutput[1],
+        ((3.0f - 4.0f) / denominator) * 2.0f + 1.0f,
+        2.0e-6f,
+        "shared norm first tile channel one"
+    );
+    expectNear(
+        secondOutput[0],
+        ((5.0f - 4.0f) / denominator) * 2.0f + 1.0f,
+        2.0e-6f,
+        "shared norm second tile channel zero"
+    );
+    expectNear(
+        secondOutput[1],
+        ((7.0f - 4.0f) / denominator) * 2.0f + 1.0f,
+        2.0e-6f,
+        "shared norm second tile channel one"
+    );
+}
+
 void testRejectsInvalidContracts() {
     const float input[] = {1.0f, 2.0f, 3.0f};
     kira::pisa::GroupNormTileStats stats;
@@ -186,6 +237,7 @@ int main() {
     testComputesPopulationStatsLikeUpstreamVarMean();
     testSummarizesTilesUsingTotalVariance();
     testAppliesSharedStatsAndAffineTransform();
+    testNormalizesTilesUsingOneSharedDistribution();
     testRejectsInvalidContracts();
 
     if (failures != 0) {

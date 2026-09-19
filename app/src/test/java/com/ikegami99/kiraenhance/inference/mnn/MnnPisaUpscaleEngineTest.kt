@@ -272,6 +272,65 @@ class MnnPisaUpscaleEngineTest {
     }
 
     @Test
+    fun `publishes reproducible inference geometry diagnostics`() {
+        val native = FakeMnnPisaNativeApi(
+            inferenceResult = MnnPisaNativeInferenceResult(
+                errorCode = MnnPisaNativeError.NONE,
+                outputWidth = 256,
+                outputHeight = 384,
+                outputRowStrideBytes = 1024,
+                gpuUsed = true,
+            ),
+            sessionInfo = MnnPisaSessionInfo(
+                backend = MnnPisaBackend.OPENCL,
+                gpuEnabled = true,
+            ),
+        )
+        val published = mutableListOf<MnnPisaInferenceDiagnostics>()
+        val engine = MnnPisaUpscaleEngine(
+            nativeApi = native,
+            onInferenceDiagnostics = published::add,
+        )
+        assertTrue(engine.load(request()) is ModelLoadResult.Loaded)
+
+        val result = engine.upscale(
+            input = UpscaleInput(
+                width = 64,
+                height = 96,
+                rowStrideBytes = 256,
+                pixelFormat = PixelFormat.RGBA_8888,
+                pixels = ByteBuffer.allocateDirect(64 * 96 * 4),
+            ),
+            settings = UpscaleSettings(outputScale = 4),
+        )
+
+        assertTrue(result is UpscaleResult.Success)
+        assertEquals(1, published.size)
+        assertEquals(
+            MnnPisaInferenceDiagnostics(
+                sourceWidth = 64,
+                sourceHeight = 96,
+                preUpscaleWidth = 128,
+                preUpscaleHeight = 192,
+                rawModelWidth = 512,
+                rawModelHeight = 768,
+                modelWidth = 512,
+                modelHeight = 768,
+                outputWidth = 256,
+                outputHeight = 384,
+                smallInputBoosted = true,
+                noiseSeed = 42L,
+                backend = MnnPisaBackend.OPENCL,
+                nativeError = MnnPisaNativeError.NONE,
+                nativeOutputWidth = 256,
+                nativeOutputHeight = 384,
+                gpuUsed = true,
+            ),
+            published.single(),
+        )
+    }
+
+    @Test
     fun `small PiSA input is forwarded to native preprocessing`() {
         val native = FakeMnnPisaNativeApi(
             inferenceResult = MnnPisaNativeInferenceResult(

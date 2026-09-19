@@ -17,6 +17,7 @@ import java.nio.ByteBuffer
 class MnnPisaUpscaleEngine(
     private val nativeApi: MnnPisaNativeApi = MnnPisaNativeBridge,
     private val onDiagnostics: (MnnPisaDiagnosticsSnapshot) -> Unit = {},
+    private val onInferenceDiagnostics: (MnnPisaInferenceDiagnostics) -> Unit = {},
 ) : UpscaleEngine {
     private var nativeHandle: Long = 0L
     private var loadedRequest: ModelLoadRequest? = null
@@ -201,11 +202,26 @@ class MnnPisaUpscaleEngine(
                 outputCapacityBytes = capacityLong,
             )
         }.getOrElse { error ->
+            publishInferenceDiagnostics(
+                geometry = geometry,
+                nativeResult = MnnPisaNativeInferenceResult(
+                    errorCode = MnnPisaNativeError.INTERNAL,
+                    outputWidth = 0,
+                    outputHeight = 0,
+                    outputRowStrideBytes = 0,
+                    gpuUsed = false,
+                ),
+            )
             return failed(
                 EngineErrorCode.INFERENCE_FAILED,
                 "MNN PiSA-SR inference failed: ${error.message ?: error.javaClass.simpleName}",
             )
         }
+
+        publishInferenceDiagnostics(
+            geometry = geometry,
+            nativeResult = nativeResult,
+        )
 
         if (nativeResult.errorCode != MnnPisaNativeError.NONE) {
             return failed(mapInferenceError(nativeResult.errorCode), nativeErrorMessage(nativeResult.errorCode))
@@ -305,6 +321,34 @@ class MnnPisaUpscaleEngine(
         -> EngineErrorCode.INTERNAL
     }
 
+    private fun publishInferenceDiagnostics(
+        geometry: PisaResizeGeometry,
+        nativeResult: MnnPisaNativeInferenceResult,
+    ) {
+        val diagnostic = MnnPisaInferenceDiagnostics(
+            sourceWidth = geometry.sourceWidth,
+            sourceHeight = geometry.sourceHeight,
+            preUpscaleWidth = geometry.preUpscaleWidth,
+            preUpscaleHeight = geometry.preUpscaleHeight,
+            rawModelWidth = geometry.rawModelWidth,
+            rawModelHeight = geometry.rawModelHeight,
+            modelWidth = geometry.modelWidth,
+            modelHeight = geometry.modelHeight,
+            outputWidth = geometry.outputWidth,
+            outputHeight = geometry.outputHeight,
+            smallInputBoosted = geometry.smallInputBoosted,
+            noiseSeed = INFERENCE_NOISE_SEED,
+            backend = diagnosticsSnapshot?.sessionInfo?.backend,
+            nativeError = nativeResult.errorCode,
+            nativeOutputWidth = nativeResult.outputWidth,
+            nativeOutputHeight = nativeResult.outputHeight,
+            gpuUsed = nativeResult.gpuUsed,
+        )
+        runCatching {
+            onInferenceDiagnostics(diagnostic)
+        }
+    }
+
     private fun nativeErrorMessage(error: MnnPisaNativeError): String = when (error) {
         MnnPisaNativeError.NOT_IMPLEMENTED -> "PiSA-SR MNN image path does not support this input yet"
         else -> "MNN PiSA-SR inference failed: $error"
@@ -313,6 +357,7 @@ class MnnPisaUpscaleEngine(
     private companion object {
         const val MODEL_ID = "pisa-sr"
         const val NATIVE_SCALE = 4
+        const val INFERENCE_NOISE_SEED = 42L
         const val BYTES_PER_PIXEL = 4
         const val MAX_MONOLITHIC_MODEL_PIXELS = 1024L * 1024L
     }

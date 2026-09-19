@@ -38,4 +38,10 @@ bool buildVaeTilePlan(
     VaeTilePlan& output
 );
 
+bool localOutputCropForVaeTile(
+    const VaeTileRegion& tile,
+    bool decoder,
+    TileRegion& output
+);
+
 }  // namespace kira::pisa

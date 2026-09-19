@@ -15,6 +15,7 @@ object MnnPisaNativeBridge : MnnPisaNativeApi {
         unetPath: String,
         vaeDecoderPath: String,
         emptyPromptPath: String,
+        vaeSegmentPackPath: String,
         preferGpu: Boolean,
     ): LongArray
 
@@ -62,6 +63,7 @@ object MnnPisaNativeBridge : MnnPisaNativeApi {
         unetPath: String,
         vaeDecoderPath: String,
         emptyPromptPath: String,
+        vaeSegmentPackPath: String,
         preferGpu: Boolean,
     ): MnnPisaNativeLoadResult = runCatching {
         ensureNativeLibraryLoaded()
@@ -71,6 +73,7 @@ object MnnPisaNativeBridge : MnnPisaNativeApi {
                 unetPath = unetPath,
                 vaeDecoderPath = vaeDecoderPath,
                 emptyPromptPath = emptyPromptPath,
+                vaeSegmentPackPath = vaeSegmentPackPath,
                 preferGpu = preferGpu,
             ),
         )

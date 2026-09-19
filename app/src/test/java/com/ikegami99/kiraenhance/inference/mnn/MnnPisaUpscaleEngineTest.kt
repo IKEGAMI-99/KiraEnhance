@@ -593,6 +593,7 @@ class MnnPisaUpscaleEngineTest {
             unetPath: String,
             vaeDecoderPath: String,
             emptyPromptPath: String,
+            vaeSegmentPackPath: String,
             preferGpu: Boolean,
         ): MnnPisaNativeLoadResult {
             loadCalls += 1
@@ -661,6 +662,7 @@ class MnnPisaUpscaleEngineTest {
             "unet_default.mnn",
             "vae_decoder.mnn",
             "empty_prompt.fp16",
+            "vae_segments.pack",
         )
     }
 }

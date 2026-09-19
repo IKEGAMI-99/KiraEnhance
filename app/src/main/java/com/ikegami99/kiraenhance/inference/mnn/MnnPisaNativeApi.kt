@@ -47,6 +47,7 @@ interface MnnPisaNativeApi {
         unetPath: String,
         vaeDecoderPath: String,
         emptyPromptPath: String,
+        vaeSegmentPackPath: String,
         preferGpu: Boolean,
     ): MnnPisaNativeLoadResult
 

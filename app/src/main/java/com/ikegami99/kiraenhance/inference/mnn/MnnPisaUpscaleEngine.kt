@@ -54,6 +54,7 @@ class MnnPisaUpscaleEngine(
                 unetPath = files.getValue(PisaModelRequestFactory.UNET_FILE).absolutePath,
                 vaeDecoderPath = files.getValue(PisaModelRequestFactory.VAE_DECODER_FILE).absolutePath,
                 emptyPromptPath = files.getValue(PisaModelRequestFactory.EMPTY_PROMPT_FILE).absolutePath,
+                vaeSegmentPackPath = files.getValue(PisaModelRequestFactory.VAE_SEGMENT_PACK_FILE).absolutePath,
                 preferGpu = request.capabilities.supportsGpu,
             )
         }.getOrElse { error ->

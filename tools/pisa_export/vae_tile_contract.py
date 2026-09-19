@@ -343,7 +343,8 @@ def _append_attention_tokens(
     tokens.append(_operation("add_residual", residual_key=prefix))
 
 
-def _encoder_execution_tokens(encoder: Any) -> list[dict[str, Any]]:
+def _encoder_execution_tokens(vae: Any) -> list[dict[str, Any]]:
+    encoder = vae.encoder
     tokens = [_operation("module", module_path="encoder.conv_in")]
 
     down_blocks = list(encoder.down_blocks)
@@ -389,11 +390,16 @@ def _encoder_execution_tokens(encoder: Any) -> list[dict[str, Any]]:
     )
     tokens.append(_operation("silu"))
     tokens.append(_operation("module", module_path="encoder.conv_out"))
+    tokens.append(_operation("module", module_path="quant_conv"))
     return tokens
 
 
-def _decoder_execution_tokens(decoder: Any) -> list[dict[str, Any]]:
-    tokens = [_operation("module", module_path="decoder.conv_in")]
+def _decoder_execution_tokens(vae: Any) -> list[dict[str, Any]]:
+    decoder = vae.decoder
+    tokens = [
+        _operation("module", module_path="post_quant_conv"),
+        _operation("module", module_path="decoder.conv_in"),
+    ]
 
     mid_resnets = list(decoder.mid_block.resnets)
     attentions = list(decoder.mid_block.attentions)
@@ -486,11 +492,11 @@ def build_vae_tile_execution_contract(vae: Any) -> dict[str, Any]:
     return {
         "schemaVersion": 1,
         "encoder": _build_execution_side(
-            _encoder_execution_tokens(vae.encoder),
+            _encoder_execution_tokens(vae),
             barriers["encoder"],
         ),
         "decoder": _build_execution_side(
-            _decoder_execution_tokens(vae.decoder),
+            _decoder_execution_tokens(vae),
             barriers["decoder"],
         ),
     }

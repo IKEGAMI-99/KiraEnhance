@@ -70,7 +70,12 @@ def fake_vae():
         conv_norm_out=norm(),
         conv_out=object(),
     )
-    return SimpleNamespace(encoder=encoder, decoder=decoder)
+    return SimpleNamespace(
+        encoder=encoder,
+        decoder=decoder,
+        quant_conv=object(),
+        post_quant_conv=object(),
+    )
 
 
 class VaeTileContractTest(unittest.TestCase):
@@ -213,19 +218,26 @@ class VaeTileContractTest(unittest.TestCase):
             ],
         )
         self.assertEqual(
-            ["silu", "module"],
+            ["silu", "module", "module"],
             [op["kind"] for op in encoder["stages"][-1]["after"]],
         )
         self.assertEqual(
             "encoder.conv_out",
+            encoder["stages"][-1]["after"][-2]["modulePath"],
+        )
+        self.assertEqual(
+            "quant_conv",
             encoder["stages"][-1]["after"][-1]["modulePath"],
         )
 
         decoder = contract["decoder"]
         self.assertEqual(14, len(decoder["stages"]))
         self.assertEqual(
-            "decoder.conv_in",
-            decoder["prelude"][0]["modulePath"],
+            ["post_quant_conv", "decoder.conv_in"],
+            [
+                decoder["prelude"][0]["modulePath"],
+                decoder["prelude"][1]["modulePath"],
+            ],
         )
         self.assertIn(
             "decoder.up_blocks.0.upsamplers.0",
@@ -296,8 +308,12 @@ class VaeTileContractTest(unittest.TestCase):
         self.assertFalse(final_segment["producesResidualOutput"])
         self.assertIsNone(final_segment["exitBarrier"])
         self.assertEqual(
-            ["silu", "module"],
+            ["silu", "module", "module"],
             [op["kind"] for op in final_segment["operations"]],
+        )
+        self.assertEqual(
+            "quant_conv",
+            final_segment["operations"][-1]["modulePath"],
         )
 
         decoder = contract["decoder"]

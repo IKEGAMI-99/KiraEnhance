@@ -47,7 +47,7 @@ void testRegularInputMatchesFourXAndEightMultiple() {
     expectEqual(plan.outputHeight, 4320, "regular output height");
 }
 
-void testOddDimensionsFloorModelToEightButPreserveAppOutputContract() {
+void testOddDimensionsKeepUpstreamAlignedOutputSize() {
     kira::pisa::ResizePlan plan;
     expectTrue(
         kira::pisa::buildResizePlan(501, 333, plan),
@@ -58,8 +58,8 @@ void testOddDimensionsFloorModelToEightButPreserveAppOutputContract() {
     expectEqual(plan.rawModelHeight, 1332, "odd raw model height");
     expectEqual(plan.modelWidth, 2000, "odd model width floors to multiple of eight");
     expectEqual(plan.modelHeight, 1328, "odd model height floors to multiple of eight");
-    expectEqual(plan.outputWidth, 2004, "app output remains exact 4x width");
-    expectEqual(plan.outputHeight, 1332, "app output remains exact 4x height");
+    expectEqual(plan.outputWidth, 2000, "regular output keeps aligned model width");
+    expectEqual(plan.outputHeight, 1328, "regular output keeps aligned model height");
 }
 
 void testSmallInputMatchesUpstreamMinimumSideBoost() {
@@ -122,7 +122,7 @@ void testRejectsInvalidAndOverflowingDimensions() {
 
 int main() {
     testRegularInputMatchesFourXAndEightMultiple();
-    testOddDimensionsFloorModelToEightButPreserveAppOutputContract();
+    testOddDimensionsKeepUpstreamAlignedOutputSize();
     testSmallInputMatchesUpstreamMinimumSideBoost();
     testSmallNonSquareInputUsesPythonStyleTruncation();
     testRejectsInvalidAndOverflowingDimensions();

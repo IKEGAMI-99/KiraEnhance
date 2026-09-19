@@ -101,11 +101,17 @@ bool buildResizePlan(
         return false;
     }
 
-    int outputWidth = 0;
-    int outputHeight = 0;
+    // Upstream only restores the exact original x upscale dimensions
+    // when it first boosted a too-small input. For regular inputs, the
+    // post-inference image stays on the 8-pixel-aligned model grid.
+    int outputWidth = modelWidth;
+    int outputHeight = modelHeight;
     if (
-        !checkedScale(sourceWidth, upscale, outputWidth) ||
-        !checkedScale(sourceHeight, upscale, outputHeight)
+        boostSmallInput &&
+        (
+            !checkedScale(sourceWidth, upscale, outputWidth) ||
+            !checkedScale(sourceHeight, upscale, outputHeight)
+        )
     ) {
         return false;
     }

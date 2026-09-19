@@ -6,6 +6,8 @@
 #include "pisa_gaussian_noise.h"
 #include "pisa_latent_math.h"
 #include "pisa_image_tensor.h"
+#include "pisa_pillow_resize.h"
+#include "pisa_preprocess.h"
 #include "pisa_resize_plan.h"
 #include "pisa_tile_plan.h"
 #include "pisa_tiled_inference.h"
@@ -1493,21 +1495,6 @@ Java_com_ikegami99_kiraenhance_inference_mnn_MnnPisaNativeBridge_nativeInfer(
         return makeInferenceResult(env, NativeError::INVALID_ARGUMENT);
     }
 
-    // Minimum-size preboost still needs the upstream pre-resize path.
-    // Odd source dimensions are supported by running the graph at the
-    // 8-aligned model size and resizing the decoded image back to the
-    // app's exact 4x output contract below.
-    if (resizePlan.smallInputBoosted) {
-        return makeInferenceResult(
-            env,
-            NativeError::NOT_IMPLEMENTED,
-            0,
-            0,
-            0,
-            isGpuBackend(bundle->backend)
-        );
-    }
-
     int latentWidth = 0;
     int latentHeight = 0;
     if (!preparePisaGraph(
@@ -1563,11 +1550,57 @@ Java_com_ikegami99_kiraenhance_inference_mnn_MnnPisaNativeBridge_nativeInfer(
         );
     }
 
-    MNN::Tensor* encoderInput =
-        bundle->vaeEncoder->getSessionInput(
-            bundle->vaeEncoderSession,
-            "image"
+    if (
+        resizePlan.modelWidth >
+        std::numeric_limits<int>::max() / 4
+    ) {
+        return makeInferenceResult(
+            env,
+            NativeError::OUT_OF_MEMORY,
+            0,
+            0,
+            0,
+            isGpuBackend(bundle->backend)
         );
+    }
+
+    std::size_t modelRgbaBytes = 0;
+    if (
+        !checkedElementCount(
+            {modelPixels, 4U},
+            modelRgbaBytes
+        )
+    ) {
+        return makeInferenceResult(
+            env,
+            NativeError::OUT_OF_MEMORY,
+            0,
+            0,
+            0,
+            isGpuBackend(bundle->backend)
+        );
+    }
+
+    std::unique_ptr<std::uint8_t[]> modelRgba(
+        new (std::nothrow) std::uint8_t[modelRgbaBytes]
+    );
+    std::unique_ptr<float[]> sourceImage(
+        new (std::nothrow) float[imageCount]
+    );
+    std::unique_ptr<float[]> decodedImage(
+        new (std::nothrow) float[imageCount]
+    );
+    if (!modelRgba || !sourceImage || !decodedImage) {
+        return makeInferenceResult(
+            env,
+            NativeError::OUT_OF_MEMORY,
+            0,
+            0,
+            0,
+            isGpuBackend(bundle->backend)
+        );
+    }
+
     if (isCancellationRequested(*bundle)) {
         return makeInferenceResult(
             env,
@@ -1579,13 +1612,24 @@ Java_com_ikegami99_kiraenhance_inference_mnn_MnnPisaNativeBridge_nativeInfer(
         );
     }
 
+    const int modelRowStrideBytes =
+        resizePlan.modelWidth * 4;
     if (
-        !kira::pisa::writeRgba8888BicubicNormalizedTensor(
-            encoderInput,
+        !kira::pisa::preparePisaModelRgba(
             inputData,
-            width,
-            height,
-            inputRowStrideBytes
+            inputRowStrideBytes,
+            resizePlan,
+            modelRgba.get(),
+            modelRowStrideBytes,
+            modelRgbaBytes
+        ) ||
+        !kira::pisa::rgba8888ToNormalizedNchw(
+            modelRgba.get(),
+            resizePlan.modelWidth,
+            resizePlan.modelHeight,
+            modelRowStrideBytes,
+            sourceImage.get(),
+            imageCount
         )
     ) {
         return makeInferenceResult(
@@ -1598,25 +1642,13 @@ Java_com_ikegami99_kiraenhance_inference_mnn_MnnPisaNativeBridge_nativeInfer(
         );
     }
 
-    std::unique_ptr<float[]> sourceImage(
-        new (std::nothrow) float[imageCount]
-    );
-    std::unique_ptr<float[]> decodedImage(
-        new (std::nothrow) float[imageCount]
-    );
-    if (!sourceImage || !decodedImage) {
-        return makeInferenceResult(
-            env,
-            NativeError::OUT_OF_MEMORY,
-            0,
-            0,
-            0,
-            isGpuBackend(bundle->backend)
+    MNN::Tensor* encoderInput =
+        bundle->vaeEncoder->getSessionInput(
+            bundle->vaeEncoderSession,
+            "image"
         );
-    }
-
     if (
-        !kira::pisa::readFloatNchwTensor(
+        !kira::pisa::writeFloatNchwTensor(
             encoderInput,
             sourceImage.get(),
             imageCount
@@ -1739,75 +1771,6 @@ Java_com_ikegami99_kiraenhance_inference_mnn_MnnPisaNativeBridge_nativeInfer(
             decodedImage[index] * 2.0f - 1.0f;
     }
 
-    const float* finalImage = decodedImage.get();
-    std::unique_ptr<float[]> resizedImage;
-    if (
-        resizePlan.modelWidth != resizePlan.outputWidth ||
-        resizePlan.modelHeight != resizePlan.outputHeight
-    ) {
-        std::size_t finalImageCount = 0;
-        if (
-            !checkedElementCount(
-                {
-                    3U,
-                    static_cast<std::size_t>(
-                        resizePlan.outputHeight
-                    ),
-                    static_cast<std::size_t>(
-                        resizePlan.outputWidth
-                    ),
-                },
-                finalImageCount
-            )
-        ) {
-            return makeInferenceResult(
-                env,
-                NativeError::OUT_OF_MEMORY,
-                0,
-                0,
-                0,
-                isGpuBackend(bundle->backend)
-            );
-        }
-
-        resizedImage.reset(
-            new (std::nothrow) float[finalImageCount]
-        );
-        if (!resizedImage) {
-            return makeInferenceResult(
-                env,
-                NativeError::OUT_OF_MEMORY,
-                0,
-                0,
-                0,
-                isGpuBackend(bundle->backend)
-            );
-        }
-
-        if (
-            !kira::pisa::resizePlanarBilinear(
-                decodedImage.get(),
-                3,
-                resizePlan.modelWidth,
-                resizePlan.modelHeight,
-                resizedImage.get(),
-                resizePlan.outputWidth,
-                resizePlan.outputHeight,
-                finalImageCount
-            )
-        ) {
-            return makeInferenceResult(
-                env,
-                NativeError::INFERENCE_FAILED,
-                0,
-                0,
-                0,
-                isGpuBackend(bundle->backend)
-            );
-        }
-        finalImage = resizedImage.get();
-    }
-
     if (isCancellationRequested(*bundle)) {
         return makeInferenceResult(
             env,
@@ -1834,11 +1797,72 @@ Java_com_ikegami99_kiraenhance_inference_mnn_MnnPisaNativeBridge_nativeInfer(
     }
     const int outputRowStrideBytes =
         resizePlan.outputWidth * 4;
-    if (
+
+    const bool needsOutputResize =
+        resizePlan.modelWidth != resizePlan.outputWidth ||
+        resizePlan.modelHeight != resizePlan.outputHeight;
+    if (needsOutputResize) {
+        if (
+            !kira::pisa::normalizedNchwToRgba8888(
+                decodedImage.get(),
+                resizePlan.modelWidth,
+                resizePlan.modelHeight,
+                modelRgba.get(),
+                modelRowStrideBytes,
+                modelRgbaBytes
+            )
+        ) {
+            return makeInferenceResult(
+                env,
+                NativeError::INFERENCE_FAILED,
+                0,
+                0,
+                0,
+                isGpuBackend(bundle->backend)
+            );
+        }
+
+        if (isCancellationRequested(*bundle)) {
+            return makeInferenceResult(
+                env,
+                NativeError::CANCELLED,
+                0,
+                0,
+                0,
+                isGpuBackend(bundle->backend)
+            );
+        }
+
+        if (
+            !kira::pisa::resizeRgba8888PillowRgb(
+                modelRgba.get(),
+                resizePlan.modelWidth,
+                resizePlan.modelHeight,
+                modelRowStrideBytes,
+                outputData,
+                resizePlan.outputWidth,
+                resizePlan.outputHeight,
+                outputRowStrideBytes,
+                static_cast<std::size_t>(
+                    requiredOutputBytes
+                ),
+                kira::pisa::PillowResizeFilter::BICUBIC
+            )
+        ) {
+            return makeInferenceResult(
+                env,
+                NativeError::INFERENCE_FAILED,
+                0,
+                0,
+                0,
+                isGpuBackend(bundle->backend)
+            );
+        }
+    } else if (
         !kira::pisa::normalizedNchwToRgba8888(
-            finalImage,
-            resizePlan.outputWidth,
-            resizePlan.outputHeight,
+            decodedImage.get(),
+            resizePlan.modelWidth,
+            resizePlan.modelHeight,
             outputData,
             outputRowStrideBytes,
             static_cast<std::size_t>(requiredOutputBytes)

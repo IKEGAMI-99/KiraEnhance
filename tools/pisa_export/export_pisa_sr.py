@@ -772,6 +772,30 @@ def export_onnx_graphs(
             opset=opset,
         )
 
+    vae_segment_contract = build_vae_tile_segment_contract(
+        build_vae_tile_execution_contract(vae)
+    )
+    vae_segment_onnx_paths = {
+        "encoder": _export_vae_segment_side_onnx(
+            torch,
+            vae,
+            "encoder",
+            vae_segment_contract["encoder"],
+            image,
+            output_dir,
+            opset,
+        ),
+        "decoder": _export_vae_segment_side_onnx(
+            torch,
+            vae,
+            "decoder",
+            vae_segment_contract["decoder"],
+            latent,
+            output_dir,
+            opset,
+        ),
+    }
+
     vae_scaling_factor = float(vae.config.scaling_factor)
     vae.to("cpu")
     del image
@@ -821,7 +845,13 @@ def export_onnx_graphs(
     del latent, timestep, encoder_hidden_states
     _clear_device_cache(torch, device)
 
-    for path in (vae_encoder_path, unet_path, vae_decoder_path):
+    for path in (
+        vae_encoder_path,
+        unet_path,
+        vae_decoder_path,
+        *vae_segment_onnx_paths["encoder"],
+        *vae_segment_onnx_paths["decoder"],
+    ):
         onnx.checker.check_model(str(path))
 
     return {
@@ -832,6 +862,7 @@ def export_onnx_graphs(
         },
         "emptyPromptPath": empty_prompt_path,
         "emptyPromptShape": empty_prompt_shape,
+        "vaeSegmentOnnxPaths": vae_segment_onnx_paths,
         "vaeScalingFactor": vae_scaling_factor,
         "sampleImageShape": [1, 3, sample_height, sample_width],
         "sampleLatentShape": [

@@ -19,4 +19,5 @@ data class MnnPisaInferenceDiagnostics(
     val nativeOutputHeight: Int,
     val gpuUsed: Boolean,
     val segmentedVae: Boolean = false,
+    val nativePeakTrackedBytes: Long = 0L,
 )

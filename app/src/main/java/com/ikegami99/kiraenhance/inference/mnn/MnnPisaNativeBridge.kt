@@ -44,6 +44,8 @@ object MnnPisaNativeBridge : MnnPisaNativeApi {
         outputCapacityBytes: Long,
     ): LongArray
 
+    private external fun nativeCancel(handle: Long)
+
     private external fun nativeUnloadModel(handle: Long)
 
     private fun ensureNativeLibraryLoaded() {
@@ -186,7 +188,15 @@ object MnnPisaNativeBridge : MnnPisaNativeApi {
         }
     }
 
-    override fun cancel(handle: Long) = Unit
+    override fun cancel(handle: Long) {
+        if (handle == 0L) {
+            return
+        }
+        runCatching {
+            ensureNativeLibraryLoaded()
+            nativeCancel(handle)
+        }
+    }
 
     private fun nativeLoadFailure() = MnnPisaNativeLoadResult(
         handle = 0L,

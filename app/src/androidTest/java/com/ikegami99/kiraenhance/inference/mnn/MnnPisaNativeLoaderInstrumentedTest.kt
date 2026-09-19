@@ -29,12 +29,16 @@ class MnnPisaNativeLoaderInstrumentedTest {
             val emptyPrompt = File(directory, "empty_prompt.fp16").apply {
                 writeBytes(byteArrayOf(0, 0))
             }
+            val vaeSegmentPack = File(directory, "vae_segments.pack").apply {
+                writeBytes(byteArrayOf(4))
+            }
 
             val result = MnnPisaNativeBridge.loadModel(
                 vaeEncoderPath = vaeEncoder.absolutePath,
                 unetPath = unet.absolutePath,
                 vaeDecoderPath = vaeDecoder.absolutePath,
                 emptyPromptPath = emptyPrompt.absolutePath,
+                vaeSegmentPackPath = vaeSegmentPack.absolutePath,
                 preferGpu = true,
             )
 

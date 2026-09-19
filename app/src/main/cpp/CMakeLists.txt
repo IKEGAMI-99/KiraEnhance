@@ -57,6 +57,7 @@ add_library(
     pisa_tiled_vae.cpp
     pisa_vae_tile_plan.cpp
     pisa_vae_tile_tensor.cpp
+    pisa_vae_segment_pack.cpp
     pisa_group_norm_stats.cpp
     pisa_adain.cpp
     pisa_denoise_math.cpp

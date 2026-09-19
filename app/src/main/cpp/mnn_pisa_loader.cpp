@@ -11,6 +11,7 @@
 #include "pisa_resize_plan.h"
 #include "pisa_tile_plan.h"
 #include "pisa_tiled_inference.h"
+#include "pisa_vae_segment_pack.h"
 
 #include <algorithm>
 #include <atomic>
@@ -41,6 +42,8 @@ constexpr std::size_t MAX_MONOLITHIC_MODEL_PIXELS =
     static_cast<std::size_t>(1024) * 1024;
 constexpr int PISA_UNET_TILE_SIZE = 96;
 constexpr int PISA_UNET_TILE_OVERLAP = 32;
+constexpr std::size_t PISA_VAE_ENCODER_SEGMENTS = 23;
+constexpr std::size_t PISA_VAE_DECODER_SEGMENTS = 31;
 constexpr int SMOKE_SOURCE_WIDTH = 2;
 constexpr int SMOKE_SOURCE_HEIGHT = 2;
 constexpr int SMOKE_SOURCE_STRIDE = SMOKE_SOURCE_WIDTH * 4;
@@ -255,6 +258,7 @@ struct PisaModelBundle {
     InterpreterPtr vaeEncoder;
     InterpreterPtr unet;
     InterpreterPtr vaeDecoder;
+    kira::pisa::VaeSegmentPack vaeSegmentPack;
     std::unique_ptr<std::uint8_t[]> emptyPrompt;
     std::size_t emptyPromptBytes = 0;
     MNN::Session* vaeEncoderSession = nullptr;
@@ -1185,17 +1189,20 @@ Java_com_ikegami99_kiraenhance_inference_mnn_MnnPisaNativeBridge_nativeLoadModel
     jstring unetPath,
     jstring vaeDecoderPath,
     jstring emptyPromptPath,
+    jstring vaeSegmentPackPath,
     jboolean preferGpu
 ) {
     std::string vaeEncoder;
     std::string unet;
     std::string vaeDecoder;
     std::string emptyPrompt;
+    std::string vaeSegmentPack;
     if (
         !copyRequiredPath(env, vaeEncoderPath, vaeEncoder) ||
         !copyRequiredPath(env, unetPath, unet) ||
         !copyRequiredPath(env, vaeDecoderPath, vaeDecoder) ||
-        !copyRequiredPath(env, emptyPromptPath, emptyPrompt)
+        !copyRequiredPath(env, emptyPromptPath, emptyPrompt) ||
+        !copyRequiredPath(env, vaeSegmentPackPath, vaeSegmentPack)
     ) {
         return makeLoadResult(env, 0L, NativeError::INVALID_ARGUMENT, false);
     }
@@ -1206,6 +1213,23 @@ Java_com_ikegami99_kiraenhance_inference_mnn_MnnPisaNativeBridge_nativeLoadModel
     );
     if (!bundle) {
         return makeLoadResult(env, 0L, NativeError::OUT_OF_MEMORY, false);
+    }
+
+    if (
+        !kira::pisa::loadVaeSegmentPackFile(
+            vaeSegmentPack,
+            bundle->vaeSegmentPack
+        ) ||
+        bundle->vaeSegmentPack.encoderModels.size() !=
+            PISA_VAE_ENCODER_SEGMENTS ||
+        bundle->vaeSegmentPack.decoderModels.size() !=
+            PISA_VAE_DECODER_SEGMENTS ||
+        bundle->vaeSegmentPack.encoderAffine.size() + 1 !=
+            PISA_VAE_ENCODER_SEGMENTS ||
+        bundle->vaeSegmentPack.decoderAffine.size() + 1 !=
+            PISA_VAE_DECODER_SEGMENTS
+    ) {
+        return makeLoadResult(env, 0L, NativeError::LOAD_FAILED, false);
     }
 
     bundle->vaeEncoder = loadInterpreter(vaeEncoder);

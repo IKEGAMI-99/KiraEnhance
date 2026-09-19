@@ -39,6 +39,8 @@ void testRegularInputMatchesFourXAndEightMultiple() {
     expectFalse(plan.smallInputBoosted, "regular input is not boosted");
     expectEqual(plan.preUpscaleWidth, 1920, "regular pre width");
     expectEqual(plan.preUpscaleHeight, 1080, "regular pre height");
+    expectEqual(plan.rawModelWidth, 7680, "regular raw model width");
+    expectEqual(plan.rawModelHeight, 4320, "regular raw model height");
     expectEqual(plan.modelWidth, 7680, "regular model width");
     expectEqual(plan.modelHeight, 4320, "regular model height");
     expectEqual(plan.outputWidth, 7680, "regular output width");
@@ -52,6 +54,8 @@ void testOddDimensionsFloorModelToEightButPreserveAppOutputContract() {
         "odd plan succeeds"
     );
 
+    expectEqual(plan.rawModelWidth, 2004, "odd raw model width");
+    expectEqual(plan.rawModelHeight, 1332, "odd raw model height");
     expectEqual(plan.modelWidth, 2000, "odd model width floors to multiple of eight");
     expectEqual(plan.modelHeight, 1328, "odd model height floors to multiple of eight");
     expectEqual(plan.outputWidth, 2004, "app output remains exact 4x width");
@@ -68,6 +72,8 @@ void testSmallInputMatchesUpstreamMinimumSideBoost() {
     expectTrue(plan.smallInputBoosted, "small input is boosted");
     expectEqual(plan.preUpscaleWidth, 128, "small pre width reaches threshold");
     expectEqual(plan.preUpscaleHeight, 192, "small pre height scales proportionally");
+    expectEqual(plan.rawModelWidth, 512, "small raw model width");
+    expectEqual(plan.rawModelHeight, 768, "small raw model height");
     expectEqual(plan.modelWidth, 512, "small model width");
     expectEqual(plan.modelHeight, 768, "small model height");
     expectEqual(plan.outputWidth, 256, "small final output returns to exact 4x width");
@@ -84,6 +90,8 @@ void testSmallNonSquareInputUsesPythonStyleTruncation() {
     expectTrue(plan.smallInputBoosted, "truncation input is boosted");
     expectEqual(plan.preUpscaleWidth, 175, "scaled width truncates like Python int");
     expectEqual(plan.preUpscaleHeight, 128, "minimum side becomes threshold");
+    expectEqual(plan.rawModelWidth, 700, "truncation raw model width");
+    expectEqual(plan.rawModelHeight, 512, "truncation raw model height");
     expectEqual(plan.modelWidth, 696, "model width floors to eight");
     expectEqual(plan.modelHeight, 512, "model height");
     expectEqual(plan.outputWidth, 400, "final output width");

@@ -11,6 +11,7 @@
 #include "pisa_tiled_inference.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <fstream>
@@ -258,6 +259,7 @@ struct PisaModelBundle {
     MNN::Session* unetSession = nullptr;
     MNN::Session* vaeDecoderSession = nullptr;
     MNNForwardType backend = MNN_FORWARD_CPU;
+    std::atomic<bool> cancelRequested{false};
 };
 
 InterpreterPtr loadInterpreter(const std::string& path) {
@@ -387,6 +389,14 @@ bool createPreferredSessions(
         }
     }
     return createSessionsForBackend(bundle, MNN_FORWARD_CPU);
+}
+
+bool isCancellationRequested(
+    const PisaModelBundle& bundle
+) {
+    return bundle.cancelRequested.load(
+        std::memory_order_acquire
+    );
 }
 
 bool isGpuBackend(MNNForwardType backend) {
@@ -744,6 +754,11 @@ bool runUnetTileTransform(
     }
 
     PisaModelBundle& bundle = *context->bundle;
+    if (isCancellationRequested(bundle)) {
+        context->error = NativeError::CANCELLED;
+        return false;
+    }
+
     MNN::Tensor* latent =
         bundle.unet->getSessionInput(
             bundle.unetSession,
@@ -803,6 +818,10 @@ NativeError runPisaPreparedGraph(
 ) {
     completedStages = 0;
 
+    if (isCancellationRequested(bundle)) {
+        return NativeError::CANCELLED;
+    }
+
     std::size_t momentsCount = 0;
     std::size_t latentCount = 0;
     if (
@@ -853,6 +872,9 @@ NativeError runPisaPreparedGraph(
         return mapMnnRunError(encoderRun);
     }
     completedStages = 1;
+    if (isCancellationRequested(bundle)) {
+        return NativeError::CANCELLED;
+    }
 
     const MNN::Tensor* encoderOutput =
         bundle.vaeEncoder->getSessionOutput(
@@ -886,6 +908,9 @@ NativeError runPisaPreparedGraph(
 
     if (!writeUnetConditioning(bundle)) {
         return NativeError::INFERENCE_FAILED;
+    }
+    if (isCancellationRequested(bundle)) {
+        return NativeError::CANCELLED;
     }
 
     if (
@@ -953,6 +978,9 @@ NativeError runPisaPreparedGraph(
         }
     }
     completedStages = 2;
+    if (isCancellationRequested(bundle)) {
+        return NativeError::CANCELLED;
+    }
 
     if (
         !kira::pisa::buildDecoderLatent(
@@ -981,12 +1009,19 @@ NativeError runPisaPreparedGraph(
         return NativeError::INFERENCE_FAILED;
     }
 
+    if (isCancellationRequested(bundle)) {
+        return NativeError::CANCELLED;
+    }
+
     const MNN::ErrorCode decoderRun =
         bundle.vaeDecoder->runSession(bundle.vaeDecoderSession);
     if (decoderRun != MNN::NO_ERROR) {
         return mapMnnRunError(decoderRun);
     }
     completedStages = 3;
+    if (isCancellationRequested(bundle)) {
+        return NativeError::CANCELLED;
+    }
     return NativeError::NONE;
 }
 
@@ -1038,6 +1073,17 @@ NativeError runPisaSmoke(
             bundle.vaeEncoderSession,
             "image"
         );
+    if (isCancellationRequested(*bundle)) {
+        return makeInferenceResult(
+            env,
+            NativeError::CANCELLED,
+            0,
+            0,
+            0,
+            isGpuBackend(bundle->backend)
+        );
+    }
+
     if (
         !kira::pisa::writeRgba8888BicubicNormalizedTensor(
             encoderInput,
@@ -1401,6 +1447,10 @@ Java_com_ikegami99_kiraenhance_inference_mnn_MnnPisaNativeBridge_nativeInfer(
     if (bundle == nullptr) {
         return makeInferenceResult(env, NativeError::INVALID_ARGUMENT);
     }
+    bundle->cancelRequested.store(
+        false,
+        std::memory_order_release
+    );
 
     kira::pisa::ResizePlan resizePlan;
     if (!kira::pisa::buildResizePlan(width, height, resizePlan)) {
@@ -1629,6 +1679,17 @@ Java_com_ikegami99_kiraenhance_inference_mnn_MnnPisaNativeBridge_nativeInfer(
         );
     }
 
+    if (isCancellationRequested(*bundle)) {
+        return makeInferenceResult(
+            env,
+            NativeError::CANCELLED,
+            0,
+            0,
+            0,
+            isGpuBackend(bundle->backend)
+        );
+    }
+
     if (
         !kira::pisa::adainColorFixRgbPlanar(
             decodedImage.get(),
@@ -1722,6 +1783,17 @@ Java_com_ikegami99_kiraenhance_inference_mnn_MnnPisaNativeBridge_nativeInfer(
         finalImage = resizedImage.get();
     }
 
+    if (isCancellationRequested(*bundle)) {
+        return makeInferenceResult(
+            env,
+            NativeError::CANCELLED,
+            0,
+            0,
+            0,
+            isGpuBackend(bundle->backend)
+        );
+    }
+
     if (
         resizePlan.outputWidth >
         std::numeric_limits<int>::max() / 4
@@ -1795,6 +1867,31 @@ Java_com_ikegami99_kiraenhance_inference_mnn_MnnPisaNativeBridge_nativeSessionIn
 #else
     (void)handle;
     return env->NewStringUTF("");
+#endif
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_ikegami99_kiraenhance_inference_mnn_MnnPisaNativeBridge_nativeCancel(
+    JNIEnv* /* env */,
+    jobject /* thiz */,
+    jlong handle
+) {
+#if KIRA_HAS_MNN
+    if (handle == 0L) {
+        return;
+    }
+
+    auto* bundle = reinterpret_cast<PisaModelBundle*>(
+        static_cast<std::intptr_t>(handle)
+    );
+    if (bundle != nullptr) {
+        bundle->cancelRequested.store(
+            true,
+            std::memory_order_release
+        );
+    }
+#else
+    (void)handle;
 #endif
 }
 

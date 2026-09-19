@@ -160,6 +160,35 @@ Keep this manifest with every candidate export. Two files named
 `unet_default.mnn` are not necessarily the same model, despite humanity's
 long-running campaign against useful filenames.
 
+## Compare official and Android output
+
+After exporting the same source image from the official PiSA-SR pipeline and
+KiraEnhance, compare their final RGB pixels with:
+
+```bash
+python tools/pisa_export/compare_outputs.py \
+  --reference /path/to/official.png \
+  --candidate /path/to/kiraenhance.png
+```
+
+The report includes exact-pixel and exact-channel ratios, mean absolute error
+(MAE), RMSE, maximum byte error, and PSNR. A perfect byte-for-byte match reports
+`psnr_db: null` because mathematical PSNR is infinite.
+
+Optional thresholds make the command suitable for repeatable validation:
+
+```bash
+python tools/pisa_export/compare_outputs.py \
+  --reference /path/to/official.png \
+  --candidate /path/to/kiraenhance.png \
+  --max-mae 1.0 \
+  --max-error 8
+```
+
+The command exits with status 2 when a supplied threshold is exceeded. Pillow
+is required only when running the image comparison CLI; the metric unit tests
+use the Python standard library only.
+
 ## Validation order after export
 
 Do not enable downloads in `app/src/main/assets/model-manifest.json` yet.
@@ -172,11 +201,11 @@ The next validation sequence is:
 3. Read `MnnPisaNativeBridge.graphInfo(handle)` and record the actual input
    and output tensor names, shapes, types, and dimension formats.
 4. Compare that observed MNN contract with the ONNX export contract.
-5. Only then implement native VAE sampling and graph execution.
-6. Compare PyTorch/ONNX/MNN intermediate tensors before considering
-   quantization.
-7. Review redistribution terms and provenance before enabling app-hosted
+5. Run the bounded Android inference path on a real device with the same
+   source image used by the official PiSA-SR pipeline.
+6. Compare the final images with `compare_outputs.py`, then inspect
+   intermediate tensors if the final error is larger than expected.
+7. Validate or replace the high-resolution tiled VAE strategy before removing
+   the current monolithic VAE safety cap.
+8. Review redistribution terms and provenance before enabling app-hosted
    model downloads.
-
-The current Android `infer()` must remain `NOT_IMPLEMENTED` until these
-checks are complete.

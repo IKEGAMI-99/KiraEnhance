@@ -1,0 +1,123 @@
+import pathlib
+import sys
+import unittest
+from types import SimpleNamespace
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
+
+import vae_tile_contract
+
+
+def norm(groups=32):
+    return SimpleNamespace(num_groups=groups)
+
+
+def resnet(groups=32):
+    return SimpleNamespace(
+        norm1=norm(groups),
+        norm2=norm(groups),
+    )
+
+
+def attention(groups=32):
+    return SimpleNamespace(group_norm=norm(groups))
+
+
+def fake_vae():
+    encoder = SimpleNamespace(
+        down_blocks=[
+            SimpleNamespace(resnets=[resnet(), resnet()]),
+            SimpleNamespace(resnets=[resnet()]),
+        ],
+        mid_block=SimpleNamespace(
+            resnets=[resnet(), resnet()],
+            attentions=[attention()],
+        ),
+        conv_norm_out=norm(),
+    )
+    decoder = SimpleNamespace(
+        mid_block=SimpleNamespace(
+            resnets=[resnet(), resnet()],
+            attentions=[attention()],
+        ),
+        up_blocks=[
+            SimpleNamespace(resnets=[resnet(), resnet(), resnet()]),
+            SimpleNamespace(resnets=[resnet()]),
+        ],
+        conv_norm_out=norm(),
+    )
+    return SimpleNamespace(encoder=encoder, decoder=decoder)
+
+
+class VaeTileContractTest(unittest.TestCase):
+    def test_builds_barrier_order_and_residual_contract(self):
+        contract = vae_tile_contract.build_vae_tile_barrier_contract(fake_vae())
+
+        self.assertEqual(1, contract["schemaVersion"])
+        self.assertEqual(32, contract["groupCount"])
+        self.assertEqual(12, contract["encoderBarrierCount"])
+        self.assertEqual(14, contract["decoderBarrierCount"])
+
+        encoder = contract["encoder"]
+        self.assertEqual(
+            "encoder.down_blocks.0.resnets.0.norm1",
+            encoder[0]["module_path"],
+        )
+        self.assertEqual("resnet_norm1", encoder[0]["kind"])
+        self.assertEqual("open", encoder[0]["residual_action"])
+        self.assertEqual(
+            "encoder.down_blocks.0.resnets.0",
+            encoder[0]["residual_key"],
+        )
+
+        self.assertEqual(
+            "encoder.down_blocks.0.resnets.0.norm2",
+            encoder[1]["module_path"],
+        )
+        self.assertEqual(
+            "consume_after_segment",
+            encoder[1]["residual_action"],
+        )
+        self.assertEqual(
+            "encoder.mid_block.attentions.0.group_norm",
+            encoder[8]["module_path"],
+        )
+        self.assertEqual(
+            "open_and_consume_after_segment",
+            encoder[8]["residual_action"],
+        )
+        self.assertEqual("encoder.conv_norm_out", encoder[-1]["module_path"])
+        self.assertIsNone(encoder[-1]["residual_key"])
+
+        decoder = contract["decoder"]
+        self.assertEqual(
+            "decoder.mid_block.resnets.0.norm1",
+            decoder[0]["module_path"],
+        )
+        self.assertEqual(
+            "decoder.mid_block.attentions.0.group_norm",
+            decoder[2]["module_path"],
+        )
+        self.assertEqual(
+            "decoder.up_blocks.1.resnets.0.norm2",
+            decoder[-2]["module_path"],
+        )
+        self.assertEqual("decoder.conv_norm_out", decoder[-1]["module_path"])
+
+    def test_rejects_non_32_group_contract(self):
+        model = fake_vae()
+        model.encoder.down_blocks[0].resnets[0].norm1.num_groups = 16
+
+        with self.assertRaisesRegex(ValueError, "does not use 32 groups"):
+            vae_tile_contract.build_vae_tile_barrier_contract(model)
+
+    def test_rejects_missing_mid_attention(self):
+        model = fake_vae()
+        model.decoder.mid_block.attentions = []
+
+        with self.assertRaisesRegex(ValueError, "exactly one attention"):
+            vae_tile_contract.build_vae_tile_barrier_contract(model)
+
+
+if __name__ == "__main__":
+    unittest.main()

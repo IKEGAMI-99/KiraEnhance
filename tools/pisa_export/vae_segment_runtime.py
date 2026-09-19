@@ -87,3 +87,65 @@ def run_segment_operations(
         activation=current,
         residual=live_residual,
     )
+
+
+def run_partitioned_side(
+    vae: Any,
+    side_contract: dict[str, Any],
+    activation: Any,
+    *,
+    normalize: Callable[[Any, Any], Any],
+    silu: Callable[[Any], Any],
+    attention: Callable[[Any, Any], Any],
+) -> Any:
+    prelude = side_contract.get("prelude")
+    stages = side_contract.get("stages")
+    if not isinstance(prelude, list) or not isinstance(stages, list):
+        raise ValueError("partitioned VAE side contract is incomplete")
+
+    result = run_segment_operations(
+        vae,
+        prelude,
+        activation,
+        None,
+        silu=silu,
+        attention=attention,
+    )
+    current = result.activation
+    residual = result.residual
+
+    for expected_index, stage in enumerate(stages):
+        if stage.get("index") != expected_index:
+            raise ValueError("partitioned VAE stage indices are not contiguous")
+        barrier = stage.get("barrier")
+        if not isinstance(barrier, dict):
+            raise ValueError(
+                f"partitioned VAE stage {expected_index} has no barrier"
+            )
+        barrier_path = barrier.get("module_path")
+        if not isinstance(barrier_path, str):
+            raise ValueError(
+                f"partitioned VAE stage {expected_index} has invalid barrier path"
+            )
+        barrier_module = resolve_vae_module_path(vae, barrier_path)
+        current = normalize(barrier_module, current)
+
+        after = stage.get("after")
+        if not isinstance(after, list):
+            raise ValueError(
+                f"partitioned VAE stage {expected_index} has no operations"
+            )
+        result = run_segment_operations(
+            vae,
+            after,
+            current,
+            residual,
+            silu=silu,
+            attention=attention,
+        )
+        current = result.activation
+        residual = result.residual
+
+    if residual is not None:
+        raise ValueError("partitioned VAE side finished with a live residual")
+    return current

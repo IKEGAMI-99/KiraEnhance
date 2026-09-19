@@ -123,6 +123,58 @@ class VaeSegmentRuntimeTest(unittest.TestCase):
         self.assertEqual(11, result.activation)
         self.assertEqual([model.encoder.attention], calls)
 
+    def test_runs_complete_partitioned_side_with_external_norm(self):
+        model = SimpleNamespace(
+            encoder=SimpleNamespace(
+                conv_in=Op(lambda value: value + 1),
+                norm=Op(lambda value: value * 10),
+                conv_out=Op(lambda value: value + 3),
+            )
+        )
+        side_contract = {
+            "prelude": [
+                {
+                    "kind": "module",
+                    "modulePath": "encoder.conv_in",
+                    "residualKey": None,
+                    "shortcut": None,
+                }
+            ],
+            "stages": [
+                {
+                    "index": 0,
+                    "barrier": {
+                        "module_path": "encoder.norm",
+                    },
+                    "after": [
+                        {
+                            "kind": "silu",
+                            "modulePath": None,
+                            "residualKey": None,
+                            "shortcut": None,
+                        },
+                        {
+                            "kind": "module",
+                            "modulePath": "encoder.conv_out",
+                            "residualKey": None,
+                            "shortcut": None,
+                        },
+                    ],
+                }
+            ],
+        }
+
+        result = vae_segment_runtime.run_partitioned_side(
+            model,
+            side_contract,
+            activation=2,
+            normalize=lambda module, value: module(value),
+            silu=lambda value: value * 2,
+            attention=lambda module, value: module(value),
+        )
+
+        self.assertEqual(63, result)
+
     def test_rejects_invalid_residual_state_and_unknown_operation(self):
         model = fake_vae()
 

@@ -21,6 +21,8 @@ object MnnPisaDiagnosticsFormatter {
         append(diagnostic.modelWidth)
         append("x")
         append(diagnostic.modelHeight)
+        append(" vae=")
+        append(if (diagnostic.segmentedVae) "segmented" else "monolithic")
         append(" output=")
         append(diagnostic.outputWidth)
         append("x")
